@@ -1,10 +1,10 @@
 # Smart Hospital Project - Root .gitignore
 
-# Frontend (Next.js) - from my-next-app folder
-my-next-app/node_modules/
-my-next-app/.next/
-my-next-app/.env*
-my-next-app/*.tsbuildinfo
+# Frontend (Next.js)
+frontend/node_modules/
+frontend/.next/
+frontend/.env*
+frontend/*.tsbuildinfo
 
 # Backend (Python Flask)
 backend/venv/
@@ -26,7 +26,7 @@ backend/.webassets-cache
 # Logs
 *.log
 backend/logs/
-my-next-app/logs/
+frontend/logs/
 
 # Database
 *.db
