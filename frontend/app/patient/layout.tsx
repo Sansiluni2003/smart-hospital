@@ -10,7 +10,6 @@ import {
   FileText, 
   Bell, 
   User, 
-  CreditCard, 
   LogOut,
   Menu,
   X,
@@ -27,7 +26,7 @@ const navigationItems = [
   { id: 'history', label: 'Medical History', icon: FileText, href: '/patient/history' },
   { id: 'notifications', label: 'Notifications', icon: Bell, href: '/patient/notifications' },
   { id: 'profile', label: 'My Profile', icon: User, href: '/patient/profile' },
-  { id: 'card', label: 'Digital Patient Card', icon: CreditCard, href: '/patient/card' },
+  
 ]
 
 export default function PatientLayout({
@@ -38,9 +37,18 @@ export default function PatientLayout({
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const pathname = usePathname()
 
+  // Pages that should not have the navigation layout
+  const noLayoutPages = ['/patient/register', '/patient/login']
+  const shouldShowLayout = !noLayoutPages.includes(pathname)
+
   const getCurrentPageTitle = () => {
     const currentItem = navigationItems.find(item => item.href === pathname)
     return currentItem?.label || 'Dashboard'
+  }
+
+  // If it's a no-layout page (register/login), render children without sidebar
+  if (!shouldShowLayout) {
+    return <>{children}</>
   }
 
   return (

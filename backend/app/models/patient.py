@@ -9,15 +9,13 @@ class Patient(db.Model):
     __tablename__ = 'patients'
     
     id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     opd_id = db.Column(db.String(20), unique=True, nullable=False)
     full_name = db.Column(db.String(100), nullable=False)
     date_of_birth = db.Column(db.Date, nullable=False)
     gender = db.Column(db.Enum('male', 'female', 'other'), nullable=False)
     contact_number = db.Column(db.String(15), nullable=False)
-    email = db.Column(db.String(120), unique=True, nullable=False)
     address = db.Column(db.Text, nullable=False)
-    username = db.Column(db.String(80), unique=True, nullable=False)
-    password_hash = db.Column(db.String(128), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     # Relationships

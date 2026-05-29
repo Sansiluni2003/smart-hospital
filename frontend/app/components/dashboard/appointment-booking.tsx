@@ -140,11 +140,34 @@ export function AppointmentBooking() {
     setIsLoading(true)
     
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 2000))
+      const token = localStorage.getItem('token')
       
-      const appointmentId = `APT-${Date.now()}`
-      const queueNumber = Math.floor(Math.random() * 20) + 1
+      // Temporarily hardcoding a doctor_id for now (should ideally be fetched from a doctors API endpoint)
+      const payload = {
+        doctor_id: 1, // Assume doctor 1 exists for this MVP
+        appointment_date: selectedDate,
+        appointment_time: '09:00', // Default time, could add time selection
+        location: 'Main Building',
+        notes: reason
+      }
+
+      const response = await fetch('http://localhost:5000/api/appointments/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to book appointment')
+      }
+
+      const data = await response.json()
+      
+      const appointmentId = `APT-${data.appointment_id}`
+      const queueNumber = data.queue_number
       
       const qrData = generateQRData(appointmentId, selectedDate, queueNumber)
       

@@ -1,152 +1,322 @@
 "use client"
 
+import { useState, useEffect } from "react"
+import { useRouter } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Calendar, User, AlertCircle, CheckCircle } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { 
+  Calendar, User, AlertCircle, CheckCircle, Clock, 
+  Plus, FileText, ArrowRight, Activity
+} from "lucide-react"
+import Link from "next/link"
 
-interface Patient {
-  id: string
-  name: string
-  opdId: string
-  email: string
-  phone: string
-}
-
-interface QueueInfo {
-  currentPosition: number
-  totalInQueue: number
-  estimatedWaitTime: number
-  currentlyConsulting: number
-}
-
-const mockPatient: Patient = {
-  id: "P001",
-  name: "John Doe",
-  opdId: "OPD2024001",
-  email: "john.doe@email.com",
-  phone: "+94 77 123 4567"
-}
-
-const mockQueueInfo: QueueInfo = {
-  currentPosition: 3,
-  totalInQueue: 12,
-  estimatedWaitTime: 25,
-  currentlyConsulting: 1
+interface AppointmentData {
+  id: number
+  doctor_name: string
+  specialty: string
+  appointment_date: string
+  appointment_time: string
+  status: string
+  queue_number: number
+  location: string
 }
 
 export default function DashboardPage() {
+  const router = useRouter()
+  const [patientName, setPatientName] = useState("")
+  const [opdId, setOpdId] = useState("")
+  const [appointments, setAppointments] = useState<AppointmentData[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    const userStr = localStorage.getItem('user')
+    if (userStr) {
+      const user = JSON.parse(userStr)
+      if (user.role !== 'patient') {
+        router.push('/')
+        return
+      }
+      setPatientName(user.full_name || user.username)
+      setOpdId(user.opd_id || '')
+    } else {
+      router.push('/login')
+      return
+    }
+    fetchAppointments()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router])
+
+  const fetchAppointments = async () => {
+    try {
+      const token = localStorage.getItem('token')
+      const response = await fetch('http://localhost:5000/api/appointments/', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      if (response.status === 401 || response.status === 422) {
+        localStorage.removeItem('token')
+        localStorage.removeItem('user')
+        router.push('/login')
+        return
+      }
+      if (response.ok) {
+        const data = await response.json()
+        setAppointments(data)
+      }
+    } catch (error) {
+      console.error('Failed to fetch appointments:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const todayStr = new Date().toISOString().split('T')[0]
+  const todayAppointments = appointments.filter(a => a.appointment_date === todayStr && a.status === 'scheduled')
+  const upcomingAppointments = appointments.filter(a => a.appointment_date >= todayStr && a.status === 'scheduled')
+  const completedAppointments = appointments.filter(a => a.status === 'completed')
+
+  const getGreeting = () => {
+    const hour = new Date().getHours()
+    if (hour < 12) return "Good Morning"
+    if (hour < 17) return "Good Afternoon"
+    return "Good Evening"
+  }
+
   return (
     <div className="space-y-6 p-6">
       {/* Welcome Header */}
-      <div className="bg-gradient-to-r from-blue-50 to-white rounded-2xl p-6 border border-blue-100">
+      <div className="bg-gradient-to-r rounded-2xl p-6 text-white" style={{ background: 'linear-gradient(135deg, #02006c, #1a0066, #3300cc)' }}>
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-4">
-            <div className="w-16 h-16 rounded-full bg-blue-100 flex items-center justify-center">
-              <User className="h-8 w-8 text-blue-600" />
+            <div className="w-16 h-16 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center border-2 border-white/30">
+              <User className="h-8 w-8 text-white" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-gray-900">Welcome back, {mockPatient.name}</h1>
-              <p className="text-gray-600">Patient ID: {mockPatient.opdId}</p>
+              <h1 className="text-2xl font-bold">{getGreeting()}, {patientName}</h1>
+              <p className="text-blue-200 mt-1">Patient ID: {opdId}</p>
             </div>
           </div>
-          <div className="text-right">
-            <p className="text-sm text-gray-500">Today&apos;s Date</p>
-            <p className="font-medium">{new Date().toLocaleDateString()}</p>
+          <div className="text-right hidden sm:block">
+            <p className="text-sm text-blue-200">Today&apos;s Date</p>
+            <p className="font-medium text-lg">{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}</p>
           </div>
         </div>
       </div>
 
       {/* Queue Alert Banner */}
-      {mockQueueInfo.currentPosition - mockQueueInfo.currentlyConsulting <= 2 && (
-        <div className={`rounded-lg p-4 border-l-4 ${
-          mockQueueInfo.currentPosition === mockQueueInfo.currentlyConsulting + 1 
-            ? 'bg-red-50 border-red-400' 
-            : 'bg-yellow-50 border-yellow-400'
-        }`}>
+      {todayAppointments.length > 0 && (
+        <div className="rounded-xl p-4 border-l-4 bg-green-50 border-green-400 animate-in fade-in">
           <div className="flex items-center">
-            <AlertCircle className={`h-5 w-5 mr-3 ${
-              mockQueueInfo.currentPosition === mockQueueInfo.currentlyConsulting + 1 
-                ? 'text-red-500' 
-                : 'text-yellow-500'
-            }`} />
+            <CheckCircle className="h-5 w-5 mr-3 text-green-500" />
             <div>
-              <p className={`font-medium ${
-                mockQueueInfo.currentPosition === mockQueueInfo.currentlyConsulting + 1 
-                  ? 'text-red-800' 
-                  : 'text-yellow-800'
-              }`}>
-                {mockQueueInfo.currentPosition === mockQueueInfo.currentlyConsulting + 1 
-                  ? 'You\'re Next!' 
-                  : 'Get Ready!'}
-              </p>
-              <p className={`text-sm ${
-                mockQueueInfo.currentPosition === mockQueueInfo.currentlyConsulting + 1 
-                  ? 'text-red-700' 
-                  : 'text-yellow-700'
-              }`}>
-                {mockQueueInfo.currentPosition === mockQueueInfo.currentlyConsulting + 1 
-                  ? 'Patient #' + mockQueueInfo.currentlyConsulting + ' is currently consulting. Please be ready!' 
-                  : `Only ${mockQueueInfo.currentPosition - mockQueueInfo.currentlyConsulting - 1} patient(s) ahead of you.`}
+              <p className="font-medium text-green-800">You have {todayAppointments.length} appointment(s) today!</p>
+              <p className="text-sm text-green-700">
+                Next: Dr. {todayAppointments[0].doctor_name} at {todayAppointments[0].appointment_time}
               </p>
             </div>
           </div>
         </div>
       )}
 
-      {/* Current Appointment Status */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center space-x-2">
-            <Calendar className="h-5 w-5 text-blue-600" />
-            <span>Today&apos;s Appointment</span>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <Card className="border-0 shadow-md hover:shadow-lg transition-shadow">
+          <CardContent className="p-5">
             <div className="flex items-center justify-between">
               <div>
-                <div className="flex items-center space-x-2 mb-2">
-                  <CheckCircle className="h-5 w-5 text-green-600" />
-                  <span className="font-medium text-green-800">Appointment Confirmed</span>
-                </div>
-                <p className="text-gray-700">Dr. Sarah Wilson - Ophthalmology</p>
-                <p className="text-sm text-gray-600">10:00 AM • Room 201 • Queue #5</p>
+                <p className="text-sm text-gray-500 font-medium">Today</p>
+                <p className="text-3xl font-bold text-gray-900 mt-1">{todayAppointments.length}</p>
+                <p className="text-xs text-gray-500 mt-1">Appointments</p>
               </div>
-              <div className="text-right">
-                <p className="text-sm text-gray-500">Position in Queue</p>
-                <p className="text-2xl font-bold text-green-600">#3</p>
-                <p className="text-sm text-gray-500">~25 min wait</p>
+              <div className="p-3 rounded-full bg-blue-50">
+                <Calendar className="h-6 w-6" style={{ color: '#02006c' }} />
               </div>
             </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-0 shadow-md hover:shadow-lg transition-shadow">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-500 font-medium">Upcoming</p>
+                <p className="text-3xl font-bold text-orange-600 mt-1">{upcomingAppointments.length}</p>
+                <p className="text-xs text-gray-500 mt-1">Scheduled</p>
+              </div>
+              <div className="p-3 rounded-full bg-orange-50">
+                <Clock className="h-6 w-6 text-orange-600" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-0 shadow-md hover:shadow-lg transition-shadow">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-500 font-medium">Completed</p>
+                <p className="text-3xl font-bold text-green-600 mt-1">{completedAppointments.length}</p>
+                <p className="text-xs text-gray-500 mt-1">Consultations</p>
+              </div>
+              <div className="p-3 rounded-full bg-green-50">
+                <CheckCircle className="h-6 w-6 text-green-600" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-0 shadow-md hover:shadow-lg transition-shadow">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-500 font-medium">Total</p>
+                <p className="text-3xl font-bold text-purple-600 mt-1">{appointments.length}</p>
+                <p className="text-xs text-gray-500 mt-1">All time</p>
+              </div>
+              <div className="p-3 rounded-full bg-purple-50">
+                <Activity className="h-6 w-6 text-purple-600" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Today's Appointment Card */}
+      <Card className="border-0 shadow-md">
+        <CardHeader className="bg-gray-50 border-b border-gray-200">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-lg font-bold text-gray-900 flex items-center">
+              <Calendar className="h-5 w-5 mr-2" style={{ color: '#02006c' }} />
+              Today&apos;s Appointments
+            </CardTitle>
+            <Link href="/patient/appointments">
+              <Button variant="outline" size="sm">
+                View All <ArrowRight className="h-4 w-4 ml-2" />
+              </Button>
+            </Link>
           </div>
+        </CardHeader>
+        <CardContent className="p-6">
+          {loading ? (
+            <div className="text-center py-8">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 mx-auto mb-3" style={{ borderColor: '#02006c' }}></div>
+              <p className="text-gray-500">Loading appointments...</p>
+            </div>
+          ) : todayAppointments.length > 0 ? (
+            <div className="space-y-4">
+              {todayAppointments.map((apt) => (
+                <div key={apt.id} className="bg-green-50 border border-green-200 rounded-xl p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="flex items-center space-x-2 mb-2">
+                        <CheckCircle className="h-5 w-5 text-green-600" />
+                        <span className="font-medium text-green-800">Appointment Confirmed</span>
+                      </div>
+                      <p className="text-gray-700 font-medium">Dr. {apt.doctor_name} - {apt.specialty}</p>
+                      <p className="text-sm text-gray-600">{apt.appointment_time} • {apt.location || 'Main Building'} • Queue #{apt.queue_number}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm text-gray-500">Queue Position</p>
+                      <p className="text-2xl font-bold text-green-600">#{apt.queue_number}</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-8">
+              <Calendar className="h-12 w-12 text-gray-300 mx-auto mb-3" />
+              <p className="text-gray-600 font-medium">No appointments today</p>
+              <p className="text-sm text-gray-500 mt-1">Book a new appointment to get started</p>
+            </div>
+          )}
         </CardContent>
       </Card>
 
       {/* Quick Actions */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <Card className="hover:shadow-md transition-shadow cursor-pointer">
-          <CardContent className="p-6 text-center">
-            <Calendar className="h-8 w-8 text-blue-600 mx-auto mb-3" />
-            <h3 className="font-semibold text-gray-900">Book Appointment</h3>
-            <p className="text-sm text-gray-600">Schedule your next visit</p>
-          </CardContent>
-        </Card>
-        
-        <Card className="hover:shadow-md transition-shadow cursor-pointer">
-          <CardContent className="p-6 text-center">
-            <CheckCircle className="h-8 w-8 text-green-600 mx-auto mb-3" />
-            <h3 className="font-semibold text-gray-900">View Queue</h3>
-            <p className="text-sm text-gray-600">Check your queue status</p>
-          </CardContent>
-        </Card>
-        
-        <Card className="hover:shadow-md transition-shadow cursor-pointer">
-          <CardContent className="p-6 text-center">
-            <User className="h-8 w-8 text-purple-600 mx-auto mb-3" />
-            <h3 className="font-semibold text-gray-900">Digital Card</h3>
-            <p className="text-sm text-gray-600">Access your patient card</p>
-          </CardContent>
-        </Card>
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <Link href="/patient/book-appointment">
+          <Card className="border-0 shadow-md hover:shadow-lg transition-all cursor-pointer group hover:-translate-y-1">
+            <CardContent className="p-6 text-center">
+              <div className="w-14 h-14 rounded-full mx-auto mb-3 flex items-center justify-center group-hover:scale-110 transition-transform" style={{ backgroundColor: '#02006c' }}>
+                <Plus className="h-7 w-7 text-white" />
+              </div>
+              <h3 className="font-semibold text-gray-900">Book Appointment</h3>
+              <p className="text-sm text-gray-500 mt-1">Schedule your next visit</p>
+            </CardContent>
+          </Card>
+        </Link>
+
+        <Link href="/patient/queue">
+          <Card className="border-0 shadow-md hover:shadow-lg transition-all cursor-pointer group hover:-translate-y-1">
+            <CardContent className="p-6 text-center">
+              <div className="w-14 h-14 rounded-full bg-orange-500 mx-auto mb-3 flex items-center justify-center group-hover:scale-110 transition-transform">
+                <Clock className="h-7 w-7 text-white" />
+              </div>
+              <h3 className="font-semibold text-gray-900">Queue Status</h3>
+              <p className="text-sm text-gray-500 mt-1">Check live queue</p>
+            </CardContent>
+          </Card>
+        </Link>
+
+        <Link href="/patient/history">
+          <Card className="border-0 shadow-md hover:shadow-lg transition-all cursor-pointer group hover:-translate-y-1">
+            <CardContent className="p-6 text-center">
+              <div className="w-14 h-14 rounded-full bg-green-500 mx-auto mb-3 flex items-center justify-center group-hover:scale-110 transition-transform">
+                <FileText className="h-7 w-7 text-white" />
+              </div>
+              <h3 className="font-semibold text-gray-900">Medical History</h3>
+              <p className="text-sm text-gray-500 mt-1">View past records</p>
+            </CardContent>
+          </Card>
+        </Link>
+
+        <Link href="/patient/profile">
+          <Card className="border-0 shadow-md hover:shadow-lg transition-all cursor-pointer group hover:-translate-y-1">
+            <CardContent className="p-6 text-center">
+              <div className="w-14 h-14 rounded-full bg-purple-500 mx-auto mb-3 flex items-center justify-center group-hover:scale-110 transition-transform">
+                <User className="h-7 w-7 text-white" />
+              </div>
+              <h3 className="font-semibold text-gray-900">My Profile</h3>
+              <p className="text-sm text-gray-500 mt-1">Account settings</p>
+            </CardContent>
+          </Card>
+        </Link>
       </div>
+
+      {/* Upcoming Appointments */}
+      {upcomingAppointments.length > 0 && (
+        <Card className="border-0 shadow-md">
+          <CardHeader className="bg-gray-50 border-b border-gray-200">
+            <CardTitle className="text-lg font-bold text-gray-900 flex items-center">
+              <AlertCircle className="h-5 w-5 mr-2 text-orange-500" />
+              Upcoming Appointments
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <div className="divide-y divide-gray-100">
+              {upcomingAppointments.slice(0, 5).map((apt) => (
+                <div key={apt.id} className="flex items-center justify-between p-4 hover:bg-gray-50 transition-colors">
+                  <div className="flex items-center space-x-4">
+                    <div className="w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-bold" style={{ backgroundColor: '#02006c' }}>
+                      #{apt.queue_number}
+                    </div>
+                    <div>
+                      <p className="font-medium text-gray-900">Dr. {apt.doctor_name}</p>
+                      <p className="text-sm text-gray-600">{apt.specialty}</p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-medium text-gray-900">
+                      {new Date(apt.appointment_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    </p>
+                    <p className="text-sm text-gray-600">{apt.appointment_time}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   )
 }

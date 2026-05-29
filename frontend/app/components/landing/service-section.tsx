@@ -67,7 +67,7 @@ const services = [
 
 export function ServicesSection() {
   return (
-    <section id="services" className="py-20 bg-gradient-to-br from-gray-50 to-blue-50/30">
+    <section id="services" className="py-20 bg-white">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="text-center mb-16">
           <div className="inline-flex items-center justify-center w-20 h-20 bg-gradient-to-br from-blue-50 to-blue-100 rounded-full mb-6 shadow-lg">

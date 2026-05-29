@@ -1,12 +1,13 @@
 from flask import Blueprint, request, jsonify
-from flask_jwt_extended import jwt_required, get_jwt_identity
+from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from app import db
 from app.models.appointment import Appointment
-from app.models.patient import Patient
+from app.models.user import User
+from app.models.doctor import Doctor
 from datetime import datetime
 
 appointments_bp = Blueprint('appointments', __name__)
@@ -15,20 +16,29 @@ appointments_bp = Blueprint('appointments', __name__)
 @jwt_required()
 def create_appointment():
     try:
-        patient_id = get_jwt_identity()
+        user_id = get_jwt_identity()
+        user = User.query.get(user_id)
+        
+        if user.role != 'patient' or not user.patient_profile:
+            return jsonify({'message': 'Only patients can book appointments directly'}), 403
+            
+        patient_id = user.patient_profile.id
         data = request.get_json()
         
         # Validate required fields
-        required_fields = ['doctor_name', 'specialty', 'appointment_date', 'appointment_time']
+        required_fields = ['doctor_id', 'appointment_date', 'appointment_time']
         for field in required_fields:
             if field not in data:
                 return jsonify({'message': f'{field} is required'}), 400
+                
+        doctor = Doctor.query.get(data['doctor_id'])
+        if not doctor:
+            return jsonify({'message': 'Doctor not found'}), 404
         
         # Create appointment
         appointment = Appointment(
             patient_id=patient_id,
-            doctor_name=data['doctor_name'],
-            specialty=data['specialty'],
+            doctor_id=doctor.id,
             appointment_date=datetime.strptime(data['appointment_date'], '%Y-%m-%d').date(),
             appointment_time=datetime.strptime(data['appointment_time'], '%H:%M').time(),
             location=data.get('location', ''),
@@ -37,7 +47,8 @@ def create_appointment():
         
         # Generate queue number (count of appointments for that date + 1)
         same_date_appointments = Appointment.query.filter_by(
-            appointment_date=appointment.appointment_date
+            appointment_date=appointment.appointment_date,
+            doctor_id=doctor.id
         ).count()
         appointment.queue_number = same_date_appointments + 1
         
@@ -58,17 +69,24 @@ def create_appointment():
 @jwt_required()
 def get_patient_appointments():
     try:
-        patient_id = get_jwt_identity()
-        appointments = Appointment.query.filter_by(patient_id=patient_id).order_by(
+        user_id = get_jwt_identity()
+        user = User.query.get(user_id)
+        
+        if user.role != 'patient' or not user.patient_profile:
+            return jsonify({'message': 'Profile not found'}), 404
+            
+        appointments = Appointment.query.filter_by(patient_id=user.patient_profile.id).order_by(
             Appointment.appointment_date.desc()
         ).all()
         
         appointments_list = []
         for appointment in appointments:
+            doctor = Doctor.query.get(appointment.doctor_id)
             appointments_list.append({
                 'id': appointment.id,
-                'doctor_name': appointment.doctor_name,
-                'specialty': appointment.specialty,
+                'doctor_id': appointment.doctor_id,
+                'doctor_name': doctor.full_name if doctor else 'Unknown',
+                'specialty': doctor.specialty if doctor else 'Unknown',
                 'appointment_date': appointment.appointment_date.isoformat(),
                 'appointment_time': appointment.appointment_time.strftime('%H:%M'),
                 'status': appointment.status,
@@ -87,17 +105,25 @@ def get_patient_appointments():
 @jwt_required()
 def update_appointment_status(appointment_id):
     try:
-        patient_id = get_jwt_identity()
+        user_id = get_jwt_identity()
+        user = User.query.get(user_id)
         data = request.get_json()
         
         appointment = Appointment.query.get(appointment_id)
         if not appointment:
             return jsonify({'message': 'Appointment not found'}), 404
         
-        # Only allow patient to update their own appointments
-        if appointment.patient_id != patient_id:
-            return jsonify({'message': 'Unauthorized'}), 403
-        
+        # Verify permissions
+        if user.role == 'patient':
+            if appointment.patient_id != user.patient_profile.id:
+                return jsonify({'message': 'Unauthorized'}), 403
+            # Patients can only cancel
+            if data.get('status') != 'cancelled':
+                return jsonify({'message': 'Patients can only cancel appointments'}), 403
+        elif user.role == 'doctor':
+            if appointment.doctor_id != user.doctor_profile.id:
+                return jsonify({'message': 'Unauthorized'}), 403
+                
         if 'status' in data:
             if data['status'] in ['scheduled', 'completed', 'cancelled']:
                 appointment.status = data['status']
@@ -116,14 +142,14 @@ def update_appointment_status(appointment_id):
 @jwt_required()
 def cancel_appointment(appointment_id):
     try:
-        patient_id = get_jwt_identity()
+        user_id = get_jwt_identity()
+        user = User.query.get(user_id)
         
         appointment = Appointment.query.get(appointment_id)
         if not appointment:
             return jsonify({'message': 'Appointment not found'}), 404
         
-        # Only allow patient to cancel their own appointments
-        if appointment.patient_id != patient_id:
+        if user.role == 'patient' and appointment.patient_id != user.patient_profile.id:
             return jsonify({'message': 'Unauthorized'}), 403
         
         appointment.status = 'cancelled'

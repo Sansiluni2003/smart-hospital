@@ -25,9 +25,13 @@ def create_app(config_name='default'):
     from app.routes.auth import auth_bp
     from app.routes.patients import patients_bp
     from app.routes.appointments import appointments_bp
+    from app.routes.admin import admin_bp
+    from app.routes.queue_routes import queue_bp
     
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(patients_bp, url_prefix='/api/patients')
     app.register_blueprint(appointments_bp, url_prefix='/api/appointments')
+    app.register_blueprint(admin_bp, url_prefix='/api/admin')
+    app.register_blueprint(queue_bp, url_prefix='/api/queue')
     
     return app

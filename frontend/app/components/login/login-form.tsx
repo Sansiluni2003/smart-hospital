@@ -96,37 +96,81 @@ export function LoginForm() {
     
     setIsLoading(true)
     
-    // Simulate API call
     try {
-      await new Promise(resolve => setTimeout(resolve, 2000))
-      // Here you would typically make an API call to authenticate
-      console.log("Login attempt:", {
-        ...formData,
-        userType: selectedUserType
+      // Try backend login first; if backend not available or returns error,
+      // fallback to demo login that accepts any identifier/email for the
+      // selected role so the portals can be used without a backend.
+      const response = await fetch('http://localhost:5000/api/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          username: formData.identifier,
+          password: formData.password
+        }),
       })
-      
-      // Redirect to appropriate dashboard based on user type
+
+      if (response.ok) {
+        const data = await response.json()
+        // Store token and user info
+        localStorage.setItem('token', data.access_token)
+        localStorage.setItem('user', JSON.stringify(data.user))
+
+        const userRole = data.user.role || selectedUserType
+        switch (userRole) {
+          case 'patient':
+            router.push('/patient/dashboard')
+            break
+          case 'doctor':
+            router.push('/doctor/dashboard')
+            break
+          case 'staff':
+            router.push('/staff/dashboard')
+            break
+          case 'admin':
+            router.push('/admin/dashboard')
+            break
+          default:
+            router.push('/')
+        }
+        return
+      }
+
+      // If backend returned non-ok, fall through to demo fallback below
+      console.warn('Backend login failed or returned non-OK. Using demo fallback.')
+    } catch (error) {
+      console.warn('Backend unreachable — using demo login fallback.', error)
+    }
+
+    // Demo fallback: accept any identifier/email and create a demo session
+    try {
+      const demoUser = {
+        email: formData.identifier,
+        role: selectedUserType,
+        name: (formData.identifier || selectedUserType).split('@')[0]
+      }
+      const demoToken = `demo-token-${selectedUserType}-${Date.now()}`
+      localStorage.setItem('token', demoToken)
+      localStorage.setItem('user', JSON.stringify(demoUser))
+
+      // Redirect to selected portal dashboard
       switch (selectedUserType) {
         case 'patient':
           router.push('/patient/dashboard')
           break
         case 'doctor':
-          // router.push('/doctor-dashboard')
-          router.push('/patient/dashboard') // For now, redirect to patient dashboard
+          router.push('/doctor/dashboard')
           break
         case 'staff':
-          // router.push('/staff-dashboard')
-          router.push('/patient/dashboard') // For now, redirect to patient dashboard
+          router.push('/staff/dashboard')
           break
         case 'admin':
-          // router.push('/admin-dashboard')
-          router.push('/patient/dashboard') // For now, redirect to patient dashboard
+          router.push('/admin/dashboard')
           break
         default:
-          router.push('/patient/dashboard')
+          router.push('/')
       }
-    } catch (error) {
-      console.error("Login failed:", error)
     } finally {
       setIsLoading(false)
     }
@@ -202,7 +246,7 @@ export function LoginForm() {
               onChange={handleInputChange}
               className={`block w-full pl-10 pr-3 py-2 border ${
                 errors.identifier ? "border-red-300" : "border-gray-300"
-              } rounded-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors`}
+              } rounded-lg shadow-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors`}
               placeholder={currentUserType.placeholder}
               disabled={isLoading}
             />
@@ -229,7 +273,7 @@ export function LoginForm() {
               onChange={handleInputChange}
               className={`block w-full pl-10 pr-10 py-2 border ${
                 errors.password ? "border-red-300" : "border-gray-300"
-              } rounded-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors`}
+              } rounded-lg shadow-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors`}
               placeholder="Enter your password"
               disabled={isLoading}
             />

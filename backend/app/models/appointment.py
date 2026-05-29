@@ -10,8 +10,7 @@ class Appointment(db.Model):
     
     id = db.Column(db.Integer, primary_key=True)
     patient_id = db.Column(db.Integer, db.ForeignKey('patients.id'), nullable=False)
-    doctor_name = db.Column(db.String(100), nullable=False)
-    specialty = db.Column(db.String(100), nullable=False)
+    doctor_id = db.Column(db.Integer, db.ForeignKey('doctors.id'), nullable=False)
     appointment_date = db.Column(db.Date, nullable=False)
     appointment_time = db.Column(db.Time, nullable=False)
     status = db.Column(db.Enum('scheduled', 'completed', 'cancelled'), default='scheduled')
@@ -21,4 +20,4 @@ class Appointment(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     def __repr__(self):
-        return f'<Appointment {self.doctor_name} - {self.appointment_date}>'
+        return f'<Appointment {self.id} - Date {self.appointment_date}>'
