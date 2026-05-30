@@ -1,25 +1,17 @@
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from sqlalchemy import Boolean, Column, Integer, String, Date, ForeignKey
+from sqlalchemy.orm import relationship
 
-from app import db
-from datetime import datetime
+from app.models import Base
 
-class Patient(db.Model):
-    __tablename__ = 'patients'
-    
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-    opd_id = db.Column(db.String(20), unique=True, nullable=False)
-    full_name = db.Column(db.String(100), nullable=False)
-    date_of_birth = db.Column(db.Date, nullable=False)
-    gender = db.Column(db.Enum('male', 'female', 'other'), nullable=False)
-    contact_number = db.Column(db.String(15), nullable=False)
-    address = db.Column(db.Text, nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
-    # Relationships
-    appointments = db.relationship('Appointment', backref='patient', lazy=True)
-    
-    def __repr__(self):
-        return f'<Patient {self.full_name}>'
+class Patient(Base):
+    __tablename__ = "Patient"
+
+    Patient_ID = Column(Integer, primary_key=True, autoincrement=True)
+    UserID = Column(Integer, ForeignKey("User.UserID", ondelete="CASCADE"), unique=True, nullable=False)
+    OPD_Id = Column(String(50), unique=True, nullable=False)
+    Name = Column(String(255), nullable=False)
+    Address = Column(String(255))
+    Phone_No = Column(String(20), nullable=False)
+    DateOfBirth = Column(Date)
+    user = relationship("User")
+    is_active = Column(Boolean, default=False)

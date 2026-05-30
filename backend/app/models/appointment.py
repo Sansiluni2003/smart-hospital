@@ -1,23 +1,31 @@
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from sqlalchemy import Column, Integer, String, Date, Time, ForeignKey, Enum, TIMESTAMP
+from sqlalchemy.orm import relationship
+import enum
 
-from app import db
-from datetime import datetime
+from app.models import Base
 
-class Appointment(db.Model):
-    __tablename__ = 'appointments'
-    
-    id = db.Column(db.Integer, primary_key=True)
-    patient_id = db.Column(db.Integer, db.ForeignKey('patients.id'), nullable=False)
-    doctor_id = db.Column(db.Integer, db.ForeignKey('doctors.id'), nullable=False)
-    appointment_date = db.Column(db.Date, nullable=False)
-    appointment_time = db.Column(db.Time, nullable=False)
-    status = db.Column(db.Enum('scheduled', 'completed', 'cancelled'), default='scheduled')
-    queue_number = db.Column(db.Integer, nullable=True)
-    location = db.Column(db.String(100), nullable=True)
-    notes = db.Column(db.Text, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
-    def __repr__(self):
-        return f'<Appointment {self.id} - Date {self.appointment_date}>'
+class AppointmentStatus(enum.Enum):
+    Pending_Allocation = "Pending Allocation"
+    Allocated = "Allocated"
+    Arrived = "Arrived"
+    In_Progress = "In Progress"
+    Completed = "Completed"
+    Cancelled = "Cancelled"
+    Skipped = "Skipped"
+
+class Appointment(Base):
+    __tablename__ = "Appointment"
+
+    Appointment_ID = Column(Integer, primary_key=True, autoincrement=True)
+    Patient_ID = Column(Integer, ForeignKey("Patient.Patient_ID", ondelete="CASCADE"), nullable=False)
+    ClinicID = Column(Integer, ForeignKey("Clinic.ClinicID", ondelete="CASCADE"), nullable=False)
+    Doctor_ID = Column(Integer, ForeignKey("Doctor.Doctor_ID", ondelete="CASCADE"), nullable=True)
+    AppointmentDate = Column(Date, nullable=False)
+    AppointmentTime = Column(Time, nullable=True)
+    Queue_Number = Column(Integer)
+    QR_code = Column(String(255), unique=True)
+    Status = Column(Enum(AppointmentStatus), nullable=False, default=AppointmentStatus.Pending_Allocation)
+    CreatedAt = Column(TIMESTAMP)
+    patient = relationship("Patient")
+    clinic = relationship("Clinic")
+    doctor = relationship("Doctor")

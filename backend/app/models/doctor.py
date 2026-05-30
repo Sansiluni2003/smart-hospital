@@ -1,18 +1,14 @@
-from app import db
-from datetime import datetime
+from sqlalchemy import Column, Integer, String, ForeignKey
+from sqlalchemy.orm import relationship
+from app.models import Base
 
-class Doctor(db.Model):
-    __tablename__ = 'doctors'
-    
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-    full_name = db.Column(db.String(100), nullable=False)
-    specialty = db.Column(db.String(100), nullable=False)
-    contact_number = db.Column(db.String(15), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
-    # Relationships
-    appointments = db.relationship('Appointment', backref='doctor', lazy=True)
-    
-    def __repr__(self):
-        return f'<Doctor {self.full_name}>'
+class Doctor(Base):
+    __tablename__ = "Doctor"
+
+    Doctor_ID = Column(Integer, primary_key=True, autoincrement=True)
+    UserID = Column(Integer, ForeignKey("User.UserID", ondelete="CASCADE"), unique=True, nullable=False)
+    Name = Column(String(255), nullable=False)
+    Phone_No = Column(String(20))
+    Speciality = Column(String(100))
+    AverageConsultationMinutes = Column(Integer, default=10)
+    user = relationship("User")
