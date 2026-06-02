@@ -4,20 +4,18 @@ import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { User, Lock, Mail, Phone, Shield, MapPin, CheckCircle, AlertCircle, Save } from "lucide-react"
+import { authFetch } from "@/lib/authFetch"
+import { User, Lock, Mail, Phone, Shield, Clock, CheckCircle, AlertCircle, Save } from "lucide-react"
 
 interface DoctorProfile {
-  id: number
-  username: string
-  email: string
-  role: string
-  created_at: string
-  doctor_id: number
-  full_name: string
-  specialty: string
-  license_number: string
-  contact_number: string
-  consultation_room: string
+  Doctor_ID: number
+  UserID: number
+  Name: string
+  Email: string
+  Speciality: string
+  Phone_No: string
+  AverageConsultationMinutes?: number | null
+  CreatedAt?: string | null
 }
 
 export default function DoctorSettingsPage() {
@@ -27,12 +25,12 @@ export default function DoctorSettingsPage() {
   const [message, setMessage] = useState({ type: '', text: '' })
   const [saving, setSaving] = useState(false)
   const [editData, setEditData] = useState({
-    full_name: '',
-    specialty: '',
-    contact_number: '',
-    email: '',
-    consultation_room: ''
+    Name: '',
+    Speciality: '',
+    Phone_No: '',
+    Email: '',
   })
+  const [consultationMinutes, setConsultationMinutes] = useState('')
   const [passwordForm, setPasswordForm] = useState({
     currentPassword: '',
     newPassword: '',
@@ -43,7 +41,8 @@ export default function DoctorSettingsPage() {
     const userStr = localStorage.getItem('user')
     if (userStr) {
       const user = JSON.parse(userStr)
-      if (user.role !== 'doctor') {
+      const role = String(user?.Role || user?.role || '').toLowerCase()
+      if (role !== 'doctor') {
         router.push('/')
         return
       }
@@ -57,10 +56,8 @@ export default function DoctorSettingsPage() {
 
   const fetchProfile = async () => {
     try {
-      const token = localStorage.getItem('token')
-      const response = await fetch('http://localhost:5000/api/auth/profile', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
+      const response = await authFetch(`${apiUrl}/api/v1/doctors/doctor/me/profile`)
 
       if (response.status === 401 || response.status === 422) {
         localStorage.removeItem('token')
@@ -73,12 +70,12 @@ export default function DoctorSettingsPage() {
         const data = await response.json()
         setProfile(data)
         setEditData({
-          full_name: data.full_name || '',
-          specialty: data.specialty || '',
-          contact_number: data.contact_number || '',
-          email: data.email || '',
-          consultation_room: data.consultation_room || ''
+          Name: data.Name || '',
+          Speciality: data.Speciality || '',
+          Phone_No: data.Phone_No || '',
+          Email: data.Email || '',
         })
+        setConsultationMinutes(String(data.AverageConsultationMinutes || ''))
       }
     } catch (error) {
       console.error('Failed to fetch doctor profile:', error)
@@ -94,16 +91,24 @@ export default function DoctorSettingsPage() {
     setMessage({ type: '', text: '' })
 
     try {
-      // Direct update profile simulation or calling route if implemented.
-      // Since backend doesn't have custom doctor UPDATE endpoints apart from general user register / admin routes,
-      // we'll update it gracefully and locally, while verifying connectivity.
-      await new Promise(resolve => setTimeout(resolve, 800))
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
+      const response = await authFetch(`${apiUrl}/api/v1/doctors/doctor/me/profile`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editData),
+      })
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.detail || 'Failed to update profile')
+      }
+      const updatedProfile = await response.json()
+      setProfile(updatedProfile)
       
-      // Update local storage representation if name changed
       const userStr = localStorage.getItem('user')
       if (userStr) {
         const user = JSON.parse(userStr)
-        user.full_name = editData.full_name
+        user.Name = updatedProfile.Name
+        user.Email = updatedProfile.Email
         localStorage.setItem('user', JSON.stringify(user))
       }
 
@@ -125,7 +130,19 @@ export default function DoctorSettingsPage() {
     }
     setSaving(true)
     try {
-      await new Promise(resolve => setTimeout(resolve, 800))
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
+      const response = await authFetch(`${apiUrl}/api/v1/doctors/doctor/me/password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          CurrentPassword: passwordForm.currentPassword,
+          NewPassword: passwordForm.newPassword,
+        }),
+      })
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.detail || 'Failed to update password')
+      }
       setMessage({ type: 'success', text: 'Password updated successfully!' })
       setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' })
       setTimeout(() => setMessage({ type: '', text: '' }), 3000)
@@ -180,8 +197,8 @@ export default function DoctorSettingsPage() {
                   <label className="text-sm font-medium text-gray-700 mb-2 block">Full Name</label>
                   <input
                     type="text"
-                    value={editData.full_name}
-                    onChange={(e) => setEditData({ ...editData, full_name: e.target.value })}
+                    value={editData.Name}
+                    onChange={(e) => setEditData({ ...editData, Name: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 font-medium"
                     required
                   />
@@ -190,8 +207,8 @@ export default function DoctorSettingsPage() {
                   <label className="text-sm font-medium text-gray-700 mb-2 block">Specialty</label>
                   <input
                     type="text"
-                    value={editData.specialty}
-                    onChange={(e) => setEditData({ ...editData, specialty: e.target.value })}
+                    value={editData.Speciality}
+                    onChange={(e) => setEditData({ ...editData, Speciality: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 font-medium"
                     required
                   />
@@ -203,8 +220,8 @@ export default function DoctorSettingsPage() {
                   </label>
                   <input
                     type="tel"
-                    value={editData.contact_number}
-                    onChange={(e) => setEditData({ ...editData, contact_number: e.target.value })}
+                    value={editData.Phone_No}
+                    onChange={(e) => setEditData({ ...editData, Phone_No: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 font-medium"
                     required
                   />
@@ -216,32 +233,28 @@ export default function DoctorSettingsPage() {
                   </label>
                   <input
                     type="email"
-                    value={editData.email}
-                    onChange={(e) => setEditData({ ...editData, email: e.target.value })}
+                    value={editData.Email}
+                    onChange={(e) => setEditData({ ...editData, Email: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 font-medium"
                     required
                   />
                 </div>
                 <div>
                   <label className="text-sm font-medium text-gray-700 mb-2 block flex items-center">
-                    <MapPin className="h-4 w-4 mr-1" />
-                    Consultation Room
+                    <Clock className="h-4 w-4 mr-1" />
+                    Average Consultation Minutes
                   </label>
-                  <input
-                    type="text"
-                    value={editData.consultation_room}
-                    onChange={(e) => setEditData({ ...editData, consultation_room: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 font-medium"
-                    required
-                  />
+                  <p className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-600 font-medium">
+                    {consultationMinutes || 'Not set'}
+                  </p>
                 </div>
                 <div>
                   <label className="text-sm font-medium text-gray-750 mb-2 block flex items-center">
                     <Shield className="h-4 w-4 mr-1 text-gray-400" />
-                    Medical License Number
+                    Account Created
                   </label>
                   <p className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-600 font-mono text-sm">
-                    {profile?.license_number || 'N/A'}
+                    {profile?.CreatedAt ? new Date(profile.CreatedAt).toLocaleString() : 'N/A'}
                   </p>
                 </div>
               </div>

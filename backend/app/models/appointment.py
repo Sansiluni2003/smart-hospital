@@ -24,8 +24,16 @@ class Appointment(Base):
     AppointmentTime = Column(Time, nullable=True)
     Queue_Number = Column(Integer)
     QR_code = Column(String(255), unique=True)
-    Status = Column(Enum(AppointmentStatus), nullable=False, default=AppointmentStatus.Pending_Allocation)
+    Status = Column(
+        Enum(
+            AppointmentStatus,
+            values_callable=lambda enum_cls: [item.value for item in enum_cls],
+        ),
+        nullable=False,
+        default=AppointmentStatus.Pending_Allocation,
+    )
     CreatedAt = Column(TIMESTAMP)
+    Notes = Column(String(255))
     patient = relationship("Patient")
     clinic = relationship("Clinic")
     doctor = relationship("Doctor")

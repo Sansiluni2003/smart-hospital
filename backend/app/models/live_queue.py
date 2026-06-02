@@ -19,7 +19,14 @@ class LiveQueue(Base):
     PatientID = Column(Integer, ForeignKey("Patient.Patient_ID", ondelete="CASCADE"), nullable=False)
     QueuePosition = Column(Integer, nullable=False)
     ArrivalTime = Column(TIMESTAMP)
-    Status = Column(Enum(LiveQueueStatus), nullable=False, default=LiveQueueStatus.Waiting)
+    Status = Column(
+        Enum(
+            LiveQueueStatus,
+            values_callable=lambda enum_cls: [item.value for item in enum_cls],
+        ),
+        nullable=False,
+        default=LiveQueueStatus.Waiting,
+    )
     appointment = relationship("Appointment")
     doctor = relationship("Doctor")
     patient = relationship("Patient")

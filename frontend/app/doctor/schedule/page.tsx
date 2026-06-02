@@ -1,8 +1,9 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { authFetch } from "@/lib/authFetch"
 import { 
   Calendar, 
   Clock, 
@@ -20,6 +21,7 @@ import {
 interface TimeSlot {
   id: string
   day: string
+  availableDate: string
   startTime: string
   endTime: string
   maxPatients: number
@@ -31,7 +33,8 @@ interface Appointment {
   patientName: string
   time: string
   type: string
-  status: 'confirmed' | 'pending' | 'completed'
+  status: string
+  date: string
 }
 
 export default function DoctorSchedulePage() {
@@ -44,40 +47,97 @@ export default function DoctorSchedulePage() {
     endTime: '',
     maxPatients: 10
   })
-
-  // Mock weekly availability
-  const [weeklySchedule, setWeeklySchedule] = useState<TimeSlot[]>([
-    { id: '1', day: 'Monday', startTime: '09:00', endTime: '12:00', maxPatients: 12, status: 'available' },
-    { id: '2', day: 'Monday', startTime: '14:00', endTime: '17:00', maxPatients: 10, status: 'available' },
-    { id: '3', day: 'Wednesday', startTime: '09:00', endTime: '12:00', maxPatients: 12, status: 'available' },
-    { id: '4', day: 'Wednesday', startTime: '14:00', endTime: '16:00', maxPatients: 8, status: 'available' },
-    { id: '5', day: 'Friday', startTime: '09:00', endTime: '13:00', maxPatients: 15, status: 'available' },
-  ])
-
-  // Mock appointments for the week
-  const weekAppointments: { [key: string]: Appointment[] } = {
-    'Monday': [
-      { id: '1', patientName: 'John Doe', time: '09:30', type: 'Follow-up', status: 'confirmed' },
-      { id: '2', patientName: 'Jane Smith', time: '10:00', type: 'New', status: 'confirmed' },
-      { id: '3', patientName: 'Robert Johnson', time: '14:30', type: 'Regular', status: 'pending' },
-    ],
-    'Wednesday': [
-      { id: '4', patientName: 'Emily Davis', time: '09:00', type: 'Follow-up', status: 'confirmed' },
-      { id: '5', patientName: 'Michael Brown', time: '10:30', type: 'New', status: 'confirmed' },
-    ],
-    'Friday': [
-      { id: '6', patientName: 'Sarah Wilson', time: '09:30', type: 'Regular', status: 'confirmed' },
-      { id: '7', patientName: 'David Lee', time: '11:00', type: 'Follow-up', status: 'pending' },
-    ]
-  }
+  const [weeklySchedule, setWeeklySchedule] = useState<TimeSlot[]>([])
+  const [weekAppointments, setWeekAppointments] = useState<Appointment[]>([])
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
 
   const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 
+  useEffect(() => {
+    fetchWeekData()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentWeek])
+
+  const getWeekBounds = (sourceDate: Date) => {
+    const start = new Date(sourceDate)
+    const day = start.getDay()
+    const diff = day === 0 ? -6 : 1 - day
+    start.setDate(start.getDate() + diff)
+    start.setHours(0, 0, 0, 0)
+
+    const end = new Date(start)
+    end.setDate(start.getDate() + 6)
+    end.setHours(23, 59, 59, 999)
+
+    return { start, end }
+  }
+
+  const toDateOnly = (date: Date) => {
+    const y = date.getFullYear()
+    const m = String(date.getMonth() + 1).padStart(2, '0')
+    const d = String(date.getDate()).padStart(2, '0')
+    return `${y}-${m}-${d}`
+  }
+
+  const fetchWeekData = async () => {
+    setLoading(true)
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
+      const userStr = localStorage.getItem('user')
+      const user = userStr ? JSON.parse(userStr) : null
+      const doctorId = user?.Doctor_ID || user?.doctor_id
+      const { start, end } = getWeekBounds(currentWeek)
+
+      const [scheduleResponse, appointmentsResponse] = await Promise.all([
+        authFetch(`${apiUrl}/api/v1/doctors/doctor/me/schedule?start_date=${toDateOnly(start)}&end_date=${toDateOnly(end)}`),
+        authFetch(`${apiUrl}/api/v1/appointments/`),
+      ])
+
+      if (scheduleResponse.ok) {
+        const scheduleData = await scheduleResponse.json()
+        setWeeklySchedule(scheduleData.map((slot: { ScheduleID: number; AvailableDate: string; StartTime: string; EndTime: string; Status: string; max_patients: number }) => ({
+          id: String(slot.ScheduleID),
+          day: new Date(slot.AvailableDate).toLocaleDateString('en-US', { weekday: 'long' }),
+          availableDate: slot.AvailableDate,
+          startTime: String(slot.StartTime).slice(0, 5),
+          endTime: String(slot.EndTime).slice(0, 5),
+          maxPatients: slot.max_patients || 10,
+          status: String(slot.Status || 'available').toLowerCase() === 'available' ? 'available' : 'unavailable',
+        })))
+      }
+
+      if (appointmentsResponse.ok) {
+        const appointmentData = await appointmentsResponse.json()
+        const filteredAppointments = appointmentData
+          .filter((item: { Doctor_ID?: number; DoctorID?: number; AppointmentDate?: string }) => (item.Doctor_ID || item.DoctorID) === doctorId)
+          .filter((item: { AppointmentDate?: string }) => {
+            if (!item.AppointmentDate) return false
+            const appointmentDate = new Date(item.AppointmentDate)
+            return appointmentDate >= start && appointmentDate <= end
+          })
+          .map((item: { Appointment_ID: number; AppointmentDate?: string; AppointmentTime?: string; PatientName?: string; patient_name?: string; Patient_ID?: number; Status?: string; Notes?: string | null }) => ({
+            id: String(item.Appointment_ID),
+            patientName: item.PatientName || item.patient_name || `Patient #${item.Patient_ID || item.Appointment_ID}`,
+            time: String(item.AppointmentTime || '00:00').slice(0, 5),
+            type: item.Notes || 'Appointment',
+            status: String(item.Status || 'scheduled').toLowerCase(),
+            date: item.AppointmentDate || '',
+          }))
+        setWeekAppointments(filteredAppointments)
+      }
+    } catch (error) {
+      console.error('Failed to fetch doctor schedule data:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const getWeekDates = () => {
-    const curr = new Date(currentWeek)
-    const first = curr.getDate() - curr.getDay() + 1
+    const { start } = getWeekBounds(currentWeek)
     return daysOfWeek.map((day, index) => {
-      const date = new Date(curr.setDate(first + index))
+      const date = new Date(start)
+      date.setDate(start.getDate() + index)
       return {
         day,
         date: date.getDate(),
@@ -102,46 +162,110 @@ export default function DoctorSchedulePage() {
   }
 
   const handleAddSlot = () => {
-    if (newSlot.day && newSlot.startTime && newSlot.endTime) {
-      const slot: TimeSlot = {
-        id: Date.now().toString(),
-        day: newSlot.day,
-        startTime: newSlot.startTime,
-        endTime: newSlot.endTime,
-        maxPatients: newSlot.maxPatients,
-        status: 'available'
+    void saveNewSlot()
+  }
+
+  const saveNewSlot = async () => {
+    if (!newSlot.day || !newSlot.startTime || !newSlot.endTime) return
+    setSaving(true)
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
+      const targetDay = weekDates.find((item) => item.day === newSlot.day)
+      if (!targetDay) return
+
+      const response = await authFetch(`${apiUrl}/api/v1/doctors/doctor/me/schedule`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          AvailableDate: toDateOnly(targetDay.fullDate),
+          StartTime: newSlot.startTime,
+          EndTime: newSlot.endTime,
+          max_patients: newSlot.maxPatients,
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to create schedule slot')
       }
-      setWeeklySchedule([...weeklySchedule, slot])
+
       setNewSlot({ day: '', startTime: '', endTime: '', maxPatients: 10 })
       setShowAddSlot(false)
+      fetchWeekData()
+    } catch (error) {
+      console.error(error)
+    } finally {
+      setSaving(false)
     }
   }
 
-  const handleDeleteSlot = (id: string) => {
-    setWeeklySchedule(weeklySchedule.filter(slot => slot.id !== id))
+  const handleDeleteSlot = async (id: string) => {
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
+      const response = await authFetch(`${apiUrl}/api/v1/doctors/doctor/me/schedule/${id}`, {
+        method: 'DELETE',
+      })
+      if (!response.ok) {
+        throw new Error('Failed to delete schedule slot')
+      }
+      fetchWeekData()
+    } catch (error) {
+      console.error(error)
+    }
   }
 
   const handleEditSlot = (slot: TimeSlot) => {
     setEditingSlot(slot)
   }
 
-  const handleSaveEdit = () => {
+  const handleSaveEdit = async () => {
     if (editingSlot) {
-      setWeeklySchedule(weeklySchedule.map(slot => 
-        slot.id === editingSlot.id ? editingSlot : slot
-      ))
-      setEditingSlot(null)
+      setSaving(true)
+      try {
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
+        const response = await authFetch(`${apiUrl}/api/v1/doctors/doctor/me/schedule/${editingSlot.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            AvailableDate: editingSlot.availableDate,
+            StartTime: editingSlot.startTime,
+            EndTime: editingSlot.endTime,
+            max_patients: editingSlot.maxPatients,
+          }),
+        })
+        if (!response.ok) {
+          throw new Error('Failed to update schedule slot')
+        }
+        setEditingSlot(null)
+        fetchWeekData()
+      } catch (error) {
+        console.error(error)
+      } finally {
+        setSaving(false)
+      }
     }
   }
 
-  const getSlotsForDay = (day: string) => {
-    return weeklySchedule.filter(slot => slot.day === day).sort((a, b) => 
+  const getSlotsForDay = (dayDate: Date) => {
+    const dayKey = toDateOnly(dayDate)
+    return weeklySchedule.filter(slot => slot.availableDate === dayKey).sort((a, b) => 
       a.startTime.localeCompare(b.startTime)
     )
   }
 
-  const getAppointmentsForDay = (day: string) => {
-    return weekAppointments[day] || []
+  const getAppointmentsForDay = (dayDate: Date) => {
+    const dayKey = toDateOnly(dayDate)
+    return weekAppointments.filter((appointment) => appointment.date === dayKey)
+  }
+
+  const handleExport = () => {
+    const data = JSON.stringify({ weeklySchedule, weekAppointments }, null, 2)
+    const blob = new Blob([data], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `doctor-schedule-${toDateOnly(new Date())}.json`
+    link.click()
+    URL.revokeObjectURL(url)
   }
 
   return (
@@ -154,7 +278,7 @@ export default function DoctorSchedulePage() {
             <p className="text-sm text-gray-600 mt-1">Manage your availability and view appointments</p>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm">
+            <Button variant="outline" size="sm" onClick={handleExport}>
               <Download className="h-4 w-4 mr-2" />
               Export
             </Button>
@@ -251,9 +375,10 @@ export default function DoctorSchedulePage() {
                   className="flex-1 text-white"
                   style={{ backgroundColor: '#02006c' }}
                   onClick={editingSlot ? handleSaveEdit : handleAddSlot}
+                  disabled={saving}
                 >
                   <Save className="h-4 w-4 mr-2" />
-                  {editingSlot ? 'Save Changes' : 'Add Slot'}
+                  {saving ? 'Saving...' : editingSlot ? 'Save Changes' : 'Add Slot'}
                 </Button>
                 <Button 
                   variant="outline" 
@@ -291,10 +416,18 @@ export default function DoctorSchedulePage() {
         </Card>
 
         {/* Weekly Calendar View */}
+        {loading ? (
+          <Card className="border-0 shadow-md">
+            <CardContent className="p-12 text-center">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 mx-auto mb-3" style={{ borderColor: '#02006c' }}></div>
+              <p className="text-gray-500">Loading schedule...</p>
+            </CardContent>
+          </Card>
+        ) : (
         <div className="grid grid-cols-1 lg:grid-cols-7 gap-4">
           {weekDates.map((dayInfo, index) => {
-            const slots = getSlotsForDay(dayInfo.day)
-            const appointments = getAppointmentsForDay(dayInfo.day)
+            const slots = getSlotsForDay(dayInfo.fullDate)
+            const appointments = getAppointmentsForDay(dayInfo.fullDate)
             const isToday = dayInfo.fullDate.toDateString() === new Date().toDateString()
             
             return (
@@ -366,7 +499,7 @@ export default function DoctorSchedulePage() {
                               className={`p-2 rounded text-xs border ${
                                 apt.status === 'confirmed' 
                                   ? 'bg-blue-50 border-blue-200' 
-                                  : apt.status === 'pending'
+                                  : apt.status === 'pending' || apt.status === 'allocated'
                                   ? 'bg-orange-50 border-orange-200'
                                   : 'bg-gray-50 border-gray-200'
                               }`}
@@ -385,6 +518,7 @@ export default function DoctorSchedulePage() {
             )
           })}
         </div>
+        )}
 
         {/* Summary Statistics */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
@@ -408,7 +542,7 @@ export default function DoctorSchedulePage() {
                 <div>
                   <p className="text-sm text-gray-600">This Week</p>
                   <p className="text-3xl font-bold text-blue-600 mt-2">
-                    {Object.values(weekAppointments).flat().length}
+                    {weekAppointments.length}
                   </p>
                   <p className="text-xs text-gray-600">Appointments</p>
                 </div>

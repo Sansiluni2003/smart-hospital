@@ -4,20 +4,41 @@ import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { authFetch } from "@/lib/authFetch"
 import { 
   Stethoscope, User, FileText, CheckCircle, 
-  AlertCircle, Pill, MessageSquare, Save, History
+  AlertCircle, Pill, MessageSquare, Save, History, Upload, Paperclip, CalendarDays, MapPin, Phone, IdCard
 } from "lucide-react"
 
 interface ActiveConsultation {
   queue_id: number
   appointment_id: number
   queue_number: number
+  patient_id: number
   patient_name: string
-  age: number
-  gender: string
   chiefComplaint: string
   contact: string
+  email: string
+  address: string
+  opd_id: string
+  date_of_birth: string | null
+  appointment_time: string | null
+}
+
+interface MedicalRecord {
+  Record_ID: number
+  ConsultationNotes?: string | null
+  Prescription?: string | null
+  RecordDate?: string | null
+}
+
+interface AttachmentItem {
+  filename: string
+  display_name: string
+  category: string
+  uploaded_at: number
+  size: number
+  url: string
 }
 
 export default function DoctorConsultationPage() {
@@ -30,7 +51,11 @@ export default function DoctorConsultationPage() {
   })
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState({ type: "", text: "" })
-  const [historyOpen, setHistoryOpen] = useState(false)
+  const [historyRecords, setHistoryRecords] = useState<MedicalRecord[]>([])
+  const [attachments, setAttachments] = useState<AttachmentItem[]>([])
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [attachmentCategory, setAttachmentCategory] = useState("prescription")
+  const [uploading, setUploading] = useState(false)
 
   useEffect(() => {
     const userStr = localStorage.getItem('user')
@@ -39,48 +64,105 @@ export default function DoctorConsultationPage() {
       return
     }
     const user = JSON.parse(userStr)
-    if (user.role !== 'doctor') {
+    const role = String(user?.Role || user?.role || '').toLowerCase()
+    if (role !== 'doctor') {
       router.push('/')
       return
     }
     fetchActivePatient()
+    const interval = setInterval(() => {
+      fetchActivePatient(true)
+    }, 10000)
+    return () => clearInterval(interval)
   }, [router])
 
-  const fetchActivePatient = async () => {
-    try {
-      const token = localStorage.getItem('token')
-      const userStr = localStorage.getItem('user')
-      if (!userStr) return
-      
-      const user = JSON.parse(userStr)
-      const doctorId = user.doctor_id || 1
+  const calculateAge = (dateOfBirth: string | null) => {
+    if (!dateOfBirth) return null
+    const dob = new Date(dateOfBirth)
+    const today = new Date()
+    let age = today.getFullYear() - dob.getFullYear()
+    const monthDiff = today.getMonth() - dob.getMonth()
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < dob.getDate())) {
+      age -= 1
+    }
+    return age
+  }
 
-      const response = await fetch(`http://localhost:5000/api/queue/live/${doctorId}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
+  const fetchActivePatient = async (silent = false) => {
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
+      const response = await authFetch(`${apiUrl}/api/v1/doctors/doctor/me/queue`)
 
       if (response.ok) {
         const data = await response.json()
         const consulting = data.find((p: { status: string }) => p.status === 'in-consultation')
         
         if (consulting) {
-          // Add extra mock details for presentation
-          setActivePatient({
+          const nextPatient = {
             queue_id: consulting.queue_id,
             appointment_id: consulting.appointment_id,
             queue_number: consulting.queue_number,
+            patient_id: consulting.patient_id,
             patient_name: consulting.patient_name,
-            age: 20 + (consulting.queue_id % 50),
-            gender: consulting.queue_id % 2 === 0 ? "Male" : "Female",
-            chiefComplaint: "Blurry vision, sensitivity to light, and eye fatigue after screen time.",
-            contact: `+94 77 ${1000000 + (consulting.queue_id * 12345) % 9000000}`
-          })
+            chiefComplaint: consulting.notes || "No consultation notes yet.",
+            contact: consulting.phone || "Not provided",
+            email: consulting.email || "Not provided",
+            address: consulting.address || "Not provided",
+            opd_id: consulting.opd_id || "Not provided",
+            date_of_birth: consulting.date_of_birth || null,
+            appointment_time: consulting.appointment_time || null,
+          }
+          setActivePatient(nextPatient)
+
+          const [historyResponse, attachmentResponse] = await Promise.all([
+            authFetch(`${apiUrl}/api/v1/doctors/doctor/me/patients/${consulting.patient_id}/medical-records`),
+            authFetch(`${apiUrl}/api/v1/doctors/doctor/me/appointments/${consulting.appointment_id}/attachments`),
+          ])
+
+          setHistoryRecords(historyResponse.ok ? await historyResponse.json() : [])
+          setAttachments(attachmentResponse.ok ? await attachmentResponse.json() : [])
         } else {
           setActivePatient(null)
+          setHistoryRecords([])
+          setAttachments([])
         }
       }
     } catch (e) {
-      console.error(e)
+      if (!silent) {
+        console.error(e)
+      }
+    }
+  }
+
+  const handleUploadAttachment = async () => {
+    if (!activePatient || !selectedFile) return
+    setUploading(true)
+    setMessage({ type: "", text: "" })
+
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
+      const formData = new FormData()
+      formData.append('file', selectedFile)
+      formData.append('category', attachmentCategory)
+
+      const response = await authFetch(`${apiUrl}/api/v1/doctors/doctor/me/appointments/${activePatient.appointment_id}/attachments`, {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.detail || 'Failed to upload attachment')
+      }
+
+      setSelectedFile(null)
+      setMessage({ type: 'success', text: 'Attachment uploaded successfully.' })
+      await fetchActivePatient(true)
+    } catch (error: unknown) {
+      const errMsg = error instanceof Error ? error.message : 'Failed to upload attachment'
+      setMessage({ type: 'error', text: errMsg })
+    } finally {
+      setUploading(false)
     }
   }
 
@@ -91,18 +173,17 @@ export default function DoctorConsultationPage() {
     setMessage({ type: "", text: "" })
 
     try {
-      // In a full EHR integration, we'd POST the prescription to /api/prescriptions or update appointment notes
-      // We will simulate saving and complete the queue entry status
-      const token = localStorage.getItem('token')
-      
-      // Update queue status to completed
-      const response = await fetch(`http://localhost:5000/api/queue/${activePatient.queue_id}/status`, {
-        method: 'PUT',
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
+      const response = await authFetch(`${apiUrl}/api/v1/doctors/doctor/me/appointments/${activePatient.appointment_id}/complete`, {
+        method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ status: 'completed' })
+        body: JSON.stringify({
+          ConsultationNotes: prescription.diagnosis,
+          Prescription: prescription.medications,
+          AppointmentNotes: prescription.notes,
+        })
       })
 
       if (response.ok) {
@@ -135,7 +216,7 @@ export default function DoctorConsultationPage() {
             </h1>
             <p className="text-sm text-gray-600 mt-1">Write prescriptions and manage active consultations</p>
           </div>
-          <Button variant="outline" size="sm" onClick={fetchActivePatient}>
+          <Button variant="outline" size="sm" onClick={() => { void fetchActivePatient() }}>
             Check Active Queue
           </Button>
         </div>
@@ -167,17 +248,36 @@ export default function DoctorConsultationPage() {
                   </div>
                   <div className="text-xs space-y-2 border-t pt-3">
                     <p className="flex justify-between">
-                      <span className="text-gray-500">Age:</span>
-                      <span className="font-medium text-gray-900">{activePatient.age} years</span>
+                      <span className="text-gray-500">Patient ID:</span>
+                      <span className="font-medium text-gray-900">#{activePatient.patient_id}</span>
                     </p>
                     <p className="flex justify-between">
-                      <span className="text-gray-500">Gender:</span>
-                      <span className="font-medium text-gray-900 capitalize">{activePatient.gender}</span>
+                      <span className="text-gray-500">OPD ID:</span>
+                      <span className="font-medium text-gray-900">{activePatient.opd_id}</span>
+                    </p>
+                    <p className="flex justify-between">
+                      <span className="text-gray-500">Age:</span>
+                      <span className="font-medium text-gray-900">{calculateAge(activePatient.date_of_birth) ?? 'N/A'}</span>
+                    </p>
+                    <p className="flex justify-between">
+                      <span className="text-gray-500">Appointment Time:</span>
+                      <span className="font-medium text-gray-900">{activePatient.appointment_time || 'Pending'}</span>
+                    </p>
+                    <p className="flex justify-between">
+                      <span className="text-gray-500">Email:</span>
+                      <span className="font-medium text-gray-900 truncate max-w-[180px]">{activePatient.email}</span>
                     </p>
                     <p className="flex justify-between">
                       <span className="text-gray-500">Phone:</span>
                       <span className="font-medium text-gray-900">{activePatient.contact}</span>
                     </p>
+                  </div>
+                  <div className="rounded-lg border bg-gray-50 p-3 text-xs text-gray-700">
+                    <p className="mb-1 flex items-center font-semibold text-gray-900">
+                      <MapPin className="mr-1 h-3.5 w-3.5" />
+                      Address
+                    </p>
+                    <p>{activePatient.address}</p>
                   </div>
                 </CardContent>
               </Card>
@@ -196,6 +296,30 @@ export default function DoctorConsultationPage() {
                 </CardContent>
               </Card>
 
+              <Card className="border-0 shadow-md">
+                <CardHeader className="bg-gray-50 border-b border-gray-200">
+                  <CardTitle className="text-base font-bold text-gray-900 flex items-center">
+                    <History className="h-4 w-4 mr-2 text-blue-700" />
+                    Medical History
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-5 space-y-3 max-h-[360px] overflow-y-auto">
+                  {historyRecords.length === 0 ? (
+                    <p className="text-sm text-gray-500">No previous medical records found for this patient.</p>
+                  ) : (
+                    historyRecords.map((record) => (
+                      <div key={record.Record_ID} className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                        <p className="text-xs text-gray-500">{record.RecordDate ? new Date(record.RecordDate).toLocaleString() : 'Recorded consultation'}</p>
+                        <p className="mt-1 text-sm font-semibold text-gray-900">Diagnosis</p>
+                        <p className="text-sm text-gray-700">{record.ConsultationNotes || 'Not recorded'}</p>
+                        <p className="mt-2 text-sm font-semibold text-gray-900">Prescription</p>
+                        <p className="text-sm text-gray-700">{record.Prescription || 'Not recorded'}</p>
+                      </div>
+                    ))
+                  )}
+                </CardContent>
+              </Card>
+
               {/* Consultation Info helper */}
               <div className="bg-blue-50 border border-blue-150 rounded-xl p-4 text-sm text-blue-900">
                 <p className="font-semibold flex items-center mb-1">
@@ -211,85 +335,144 @@ export default function DoctorConsultationPage() {
             {/* Right: Electronic Health Record & Prescription writing */}
             <div className="lg:col-span-2">
               <Card className="border-0 shadow-md">
-                <CardHeader className="bg-gray-50 border-b border-gray-200 flex flex-row items-center justify-between">
+                <CardHeader className="bg-gray-50 border-b border-gray-200">
                   <CardTitle className="text-lg font-bold text-gray-900 flex items-center">
                     <FileText className="h-5 w-5 mr-2 text-blue-700" />
                     Consultation Record & Prescription
                   </CardTitle>
-                  <Button variant="outline" size="sm" onClick={() => setHistoryOpen(!historyOpen)}>
-                    <History className="h-4 w-4 mr-1" />
-                    {historyOpen ? "Close History" : "View History"}
-                  </Button>
                 </CardHeader>
                 <CardContent className="p-6">
-                  {historyOpen ? (
-                    <div className="space-y-4 py-2 animate-in slide-in-from-top-2 duration-200">
-                      <h4 className="font-semibold text-gray-800 border-b pb-1">Past Records (Simulated)</h4>
-                      <div className="p-3 bg-gray-50 rounded-lg border border-gray-100 space-y-1">
-                        <p className="text-xs text-gray-500">2026-02-15 • Dr. Sarah Wilson</p>
-                        <p className="text-sm font-semibold text-gray-900">Diagnosis: Astigmatism & Myopia</p>
-                        <p className="text-sm text-gray-600">Prescription: Cyl -0.50 Axis 180 (Daily wear lenses)</p>
+                  <form onSubmit={handleSavePrescription} className="space-y-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 rounded-xl border border-gray-200 bg-gray-50 p-4">
+                      <div className="flex items-start gap-3">
+                        <IdCard className="mt-0.5 h-4 w-4 text-blue-700" />
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Patient Reference</p>
+                          <p className="text-sm font-semibold text-gray-900">#{activePatient.patient_id} / {activePatient.opd_id}</p>
+                        </div>
                       </div>
-                      <div className="p-3 bg-gray-50 rounded-lg border border-gray-100 space-y-1">
-                        <p className="text-xs text-gray-500">2025-08-10 • Dr. Sarah Wilson</p>
-                        <p className="text-sm font-semibold text-gray-900">Diagnosis: Dry Eye Syndrome</p>
-                        <p className="text-sm text-gray-600">Prescription: TearDrops eye drops 10ml, 3 times daily</p>
+                      <div className="flex items-start gap-3">
+                        <CalendarDays className="mt-0.5 h-4 w-4 text-blue-700" />
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Appointment Slot</p>
+                          <p className="text-sm font-semibold text-gray-900">{activePatient.appointment_time || 'Pending time'}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-start gap-3 md:col-span-2">
+                        <Phone className="mt-0.5 h-4 w-4 text-blue-700" />
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Contact</p>
+                          <p className="text-sm font-semibold text-gray-900">{activePatient.contact} • {activePatient.email}</p>
+                        </div>
                       </div>
                     </div>
-                  ) : (
-                    <form onSubmit={handleSavePrescription} className="space-y-4">
-                      <div className="space-y-2">
-                        <label className="text-sm font-semibold text-gray-700 flex items-center">
-                          <Stethoscope className="h-4 w-4 mr-1 text-gray-500" />
-                          Diagnosis / Clinical Assessment
-                        </label>
-                        <textarea
-                          value={prescription.diagnosis}
-                          onChange={(e) => setPrescription({ ...prescription, diagnosis: e.target.value })}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-gray-900 focus:ring-2 focus:outline-none h-24"
-                          placeholder="Describe the medical evaluation and diagnosis..."
-                          required
+
+                    <div className="space-y-2">
+                      <label className="text-sm font-semibold text-gray-700 flex items-center">
+                        <Stethoscope className="h-4 w-4 mr-1 text-gray-500" />
+                        Diagnosis / Clinical Assessment
+                      </label>
+                      <textarea
+                        value={prescription.diagnosis}
+                        onChange={(e) => setPrescription({ ...prescription, diagnosis: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-gray-900 focus:ring-2 focus:outline-none h-28"
+                        placeholder="Describe the medical evaluation and diagnosis..."
+                        required
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-sm font-semibold text-gray-700 flex items-center">
+                        <Pill className="h-4 w-4 mr-1 text-gray-500" />
+                        Prescription / Medications
+                      </label>
+                      <textarea
+                        value={prescription.medications}
+                        onChange={(e) => setPrescription({ ...prescription, medications: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-gray-900 focus:ring-2 focus:outline-none h-28"
+                        placeholder="Enter medications, dosage, duration, and prescription instructions..."
+                        required
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-sm font-semibold text-gray-700 flex items-center">
+                        <MessageSquare className="h-4 w-4 mr-1 text-gray-500" />
+                        Consultation Notes / Follow-up Advice
+                      </label>
+                      <textarea
+                        value={prescription.notes}
+                        onChange={(e) => setPrescription({ ...prescription, notes: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-gray-900 focus:ring-2 focus:outline-none h-24"
+                        placeholder="Enter notes, referral information, or follow-up advice..."
+                      />
+                    </div>
+
+                    <div className="rounded-xl border border-gray-200 p-4 space-y-4">
+                      <div>
+                        <h4 className="text-sm font-semibold text-gray-900 flex items-center">
+                          <Paperclip className="h-4 w-4 mr-2 text-blue-700" />
+                          Upload Prescription / Medical Files
+                        </h4>
+                        <p className="text-xs text-gray-500 mt-1">Attach scanned prescriptions, reports, or related consultation documents for this patient.</p>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-[1fr_180px_auto] gap-3 items-center">
+                        <input
+                          type="file"
+                          onChange={(event) => setSelectedFile(event.target.files?.[0] || null)}
+                          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700"
                         />
+                        <select
+                          value={attachmentCategory}
+                          onChange={(event) => setAttachmentCategory(event.target.value)}
+                          className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700"
+                        >
+                          <option value="prescription">Prescription</option>
+                          <option value="medical_record">Medical Record</option>
+                          <option value="report">Report</option>
+                        </select>
+                        <Button type="button" variant="outline" onClick={handleUploadAttachment} disabled={!selectedFile || uploading}>
+                          <Upload className="h-4 w-4 mr-2" />
+                          {uploading ? 'Uploading...' : 'Upload'}
+                        </Button>
                       </div>
 
                       <div className="space-y-2">
-                        <label className="text-sm font-semibold text-gray-700 flex items-center">
-                          <Pill className="h-4 w-4 mr-1 text-gray-500" />
-                          Medications & Dosage
-                        </label>
-                        <textarea
-                          value={prescription.medications}
-                          onChange={(e) => setPrescription({ ...prescription, medications: e.target.value })}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-gray-900 focus:ring-2 focus:outline-none h-28"
-                          placeholder="Example: TearDrops Eye Drops - 1 drop in each eye 3 times daily for 2 weeks."
-                          required
-                        />
+                        {attachments.length === 0 ? (
+                          <p className="text-sm text-gray-500">No uploaded files for this consultation yet.</p>
+                        ) : (
+                          attachments.map((attachment) => {
+                            const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
+                            return (
+                              <a
+                                key={attachment.filename}
+                                href={`${apiUrl}${attachment.url}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="flex items-center justify-between rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm hover:bg-gray-100"
+                              >
+                                <div>
+                                  <p className="font-semibold text-gray-900">{attachment.display_name}</p>
+                                  <p className="text-xs text-gray-500">{attachment.category} • {(attachment.size / 1024).toFixed(1)} KB</p>
+                                </div>
+                                <span className="text-xs font-medium text-blue-700">Open</span>
+                              </a>
+                            )
+                          })
+                        )}
                       </div>
+                    </div>
 
-                      <div className="space-y-2">
-                        <label className="text-sm font-semibold text-gray-700 flex items-center">
-                          <MessageSquare className="h-4 w-4 mr-1 text-gray-500" />
-                          Advice / Follow-up Notes
-                        </label>
-                        <textarea
-                          value={prescription.notes}
-                          onChange={(e) => setPrescription({ ...prescription, notes: e.target.value })}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-gray-900 focus:ring-2 focus:outline-none h-20"
-                          placeholder="Enter patient advice, referral note, or when to follow up..."
-                        />
-                      </div>
-
-                      <Button 
-                        type="submit" 
-                        disabled={saving}
-                        className="w-full text-white py-6 font-semibold"
-                        style={{ backgroundColor: '#02006c' }}
-                      >
-                        <Save className="h-5 w-5 mr-2" />
-                        {saving ? "Saving consultation..." : "Save Record & Complete"}
-                      </Button>
-                    </form>
-                  )}
+                    <Button 
+                      type="submit" 
+                      disabled={saving}
+                      className="w-full text-white py-6 font-semibold"
+                      style={{ backgroundColor: '#02006c' }}
+                    >
+                      <Save className="h-5 w-5 mr-2" />
+                      {saving ? "Saving consultation..." : "Save Record & End Consultation"}
+                    </Button>
+                  </form>
                 </CardContent>
               </Card>
             </div>

@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Eye, EyeOff, User, Mail, Phone, MapPin, Calendar, Shield, IdCard } from "lucide-react"
 import { saveProfile } from "@/lib/profileStorage"
@@ -37,7 +38,9 @@ export function PatientRegistrationForm() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [errors, setErrors] = useState<{[key: string]: string}>({})
+  const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' | null }>({ message: '', type: null })
   const router = useRouter()
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target
@@ -134,34 +137,67 @@ export function PatientRegistrationForm() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    
+
     if (!validateForm()) return
-    
+
     setIsLoading(true)
-    
+
     try {
-      // Simulate API call for registration
-      await new Promise(resolve => setTimeout(resolve, 800))
-      console.log("Registration attempt:", formData)
-
-      // Persist profile locally for demo (exclude password fields)
-      const { confirmPassword: _cp, password: _pw, ...profile } = formData
-      void _cp
-      void _pw
-      saveProfile(profile)
-
-  // Navigate to patient profile page
-  router.push('/patient/profile')
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL
+      const payload = {
+        Name: formData.fullName,
+        DateOfBirth: formData.dateOfBirth,
+        Phone_No: formData.contactNumber,
+        Email: formData.email,
+        OPD_Id: formData.opdId,
+        Address: formData.address,
+        Password: formData.password
+      }
+      const response = await fetch(`${apiUrl}/api/v1/patients/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+      if (response.ok) {
+        setIsLoading(false)
+        setNotification({ message: 'Registration successful! Please log in.', type: 'success' })
+        setTimeout(() => {
+          setNotification({ message: '', type: null })
+          router.push('/login')
+        }, 2000)
+      } else {
+        const errorData = await response.json()
+        setIsLoading(false)
+        setNotification({ message: 'Registration failed: ' + (errorData.detail || 'Unknown error'), type: 'error' })
+      }
     } catch (error) {
-      console.error("Registration failed:", error)
-      alert("Registration failed. Please try again.")
-    } finally {
       setIsLoading(false)
+      setNotification({ message: 'Registration failed: ' + error, type: 'error' })
     }
   }
 
+  // Notification auto-dismiss after 4s (except on redirect)
+  useEffect(() => {
+    if (notification.message && notification.type === 'error') {
+      const timer = setTimeout(() => setNotification({ message: '', type: null }), 4000)
+      return () => clearTimeout(timer)
+    }
+  }, [notification])
+
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <>
+      {notification.message && (
+        <div
+          className={`fixed top-6 left-1/2 transform -translate-x-1/2 z-50 px-6 py-3 rounded-lg shadow-lg text-base font-medium transition-all duration-300
+            ${notification.type === 'success' ? 'bg-green-600 text-white' : ''}
+            ${notification.type === 'error' ? 'bg-red-600 text-white' : ''}
+          `}
+          role="alert"
+        >
+          {notification.message}
+        </div>
+      )}
+      <form onSubmit={handleSubmit} className="space-y-4">
       {/* Full Name */}
       <div className="space-y-1">
         <label htmlFor="fullName" className="text-sm font-medium text-gray-700">
@@ -475,6 +511,7 @@ export function PatientRegistrationForm() {
           "Create Patient Account"
         )}
       </Button>
-    </form>
+      </form>
+    </>
   )
 }

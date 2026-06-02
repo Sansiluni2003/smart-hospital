@@ -14,8 +14,45 @@ import {
   CheckCircle,
   XCircle,
   Activity,
-  X
+  X,
+  Bell,
+  CheckCircle2,
+  AlertCircle
 } from "lucide-react"
+import { authFetch } from "@/lib/authFetch"
+
+interface Toast {
+  id: number
+  type: "success" | "error"
+  message: string
+}
+
+function ToastStack({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id: number) => void }) {
+  return (
+    <div className="fixed top-5 right-5 z-[9999] flex flex-col gap-2 w-80">
+      {toasts.map((t) => (
+        <div
+          key={t.id}
+          className={`flex items-start gap-3 rounded-xl px-4 py-3 shadow-xl text-sm font-medium ${
+            t.type === "success"
+              ? "bg-emerald-600 text-white"
+              : "bg-rose-600 text-white"
+          }`}
+        >
+          {t.type === "success" ? (
+            <CheckCircle2 className="h-5 w-5 shrink-0 mt-0.5" />
+          ) : (
+            <AlertCircle className="h-5 w-5 shrink-0 mt-0.5" />
+          )}
+          <span className="flex-1">{t.message}</span>
+          <button onClick={() => onDismiss(t.id)} className="opacity-70 hover:opacity-100">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      ))}
+    </div>
+  )
+}
 
 interface Appointment {
   id: string
@@ -24,9 +61,49 @@ interface Appointment {
   doctor: string
   specialty: string
   queueNumber: number
-  status: 'upcoming' | 'ongoing' | 'completed' | 'cancelled' | 'scheduled'
+  status: 'upcoming' | 'allocated' | 'ongoing' | 'completed' | 'cancelled' | 'scheduled' | 'arrived'
   location: string
   backend_id?: number
+  qrCode?: string
+}
+
+const normalizeAppointmentStatus = (status?: string): Appointment['status'] => {
+  if (!status) return 'upcoming'
+
+  switch (status.toLowerCase()) {
+    case 'pending allocation':
+    case 'scheduled':
+    case 'upcoming':
+      return 'upcoming'
+    case 'allocated':
+      return 'allocated'
+    case 'arrived':
+      return 'arrived'
+    case 'in progress':
+    case 'ongoing':
+      return 'ongoing'
+    case 'completed':
+      return 'completed'
+    case 'cancelled':
+      return 'cancelled'
+    default:
+      return 'upcoming'
+  }
+}
+
+const getAppointmentStatusLabel = (status: Appointment['status']) => {
+  switch (status) {
+    case 'arrived':
+      return 'Arrival sent to staff'
+    case 'ongoing':
+      return 'In Progress'
+    case 'upcoming':
+      return 'Pending allocation'
+    case 'allocated':
+      return 'Doctor allocated'
+    default:
+      return status.charAt(0).toUpperCase() + status.slice(1)
+  }
 }
 
 export default function AppointmentsPage() {
@@ -35,82 +112,123 @@ export default function AppointmentsPage() {
   const [showQR, setShowQR] = useState(false)
   const [appointments, setAppointments] = useState<Appointment[]>([])
   const [loading, setLoading] = useState(true)
-  
+  const [toasts, setToasts] = useState<Toast[]>([])
+  const toastIdRef = { current: 0 }
+
+  const pushToast = (type: "success" | "error", message: string) => {
+    const id = ++toastIdRef.current
+    setToasts((prev) => [...prev, { id, type, message }])
+    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 5000)
+  }
+  const dismissToast = (id: number) => setToasts((prev) => prev.filter((t) => t.id !== id))
   useEffect(() => {
-    fetchAppointments()
-  }, [])
+    fetchAppointments();
+  }, []);
 
   const fetchAppointments = async () => {
     try {
-      const token = localStorage.getItem('token')
-      const response = await fetch('http://localhost:5000/api/appointments/', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
-      if (!response.ok) throw new Error('Failed to fetch')
-      const data = await response.json()
-      
-      const formatted = data.map((apt: {id: number; appointment_date: string; appointment_time: string; doctor_name: string; specialty: string; queue_number: number; status: string; location?: string}) => ({
-        id: `APT-${apt.id}`,
-        backend_id: apt.id,
-        date: apt.appointment_date,
-        time: apt.appointment_time,
-        doctor: apt.doctor_name,
-        specialty: apt.specialty,
-        queueNumber: apt.queue_number,
-        status: apt.status === 'scheduled' ? 'upcoming' : apt.status,
-        location: apt.location || 'Main Building'
-      }))
-      setAppointments(formatted)
+      // Get patient_id from localStorage user object
+      const userStr = localStorage.getItem('user');
+      if (!userStr) throw new Error('User not logged in');
+      const user = JSON.parse(userStr);
+      const patient_id = user.patient_id || user.Patient_ID;
+      if (!patient_id) throw new Error('Patient ID not found');
+
+      // Use /api/v1/patients/{patient_id}/appointments if available
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+      const response = await authFetch(
+        `${apiUrl}/api/v1/patients/${patient_id}/appointments`
+      );
+      if (!response.ok) throw new Error('Failed to fetch appointments');
+      const data = await response.json();
+      // Map backend response to frontend Appointment type
+      const formatted = data.map((apt: any) => ({
+        id: `APT-${apt.Appointment_ID || apt.id}`,
+        backend_id: apt.Appointment_ID || apt.id,
+        date: apt.AppointmentDate || apt.appointment_date,
+        time: apt.AppointmentTime || apt.appointment_time,
+        doctor: apt.Doctor_Name || apt.doctor_name || 'Doctor will be assigned by staff',
+        specialty: apt.Speciality || apt.specialty || 'Assignment pending',
+        queueNumber: apt.Queue_Number || apt.queue_number || 1,
+        status: normalizeAppointmentStatus(apt.Status || apt.status),
+        location: apt.Location || apt.location || 'Main Building',
+        qrCode: apt.QR_code || apt.qr_code || `${apt.Appointment_ID || apt.id}`
+      }));
+      setAppointments(formatted);
     } catch (error) {
-      console.error(error)
+      console.error(error);
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   const filteredAppointments = appointments.filter(appointment => {
     if (filterStatus === 'all') return true
-    if (filterStatus === 'upcoming') return appointment.status === 'upcoming' || appointment.status === 'scheduled'
+    if (filterStatus === 'upcoming') return appointment.status === 'upcoming' || appointment.status === 'allocated' || appointment.status === 'scheduled'
     return appointment.status === filterStatus
   })
 
-  const handleCancelAppointment = async (appointmentId: string, backend_id?: number) => {
-    if (!backend_id) return
-    if (confirm('Are you sure you want to cancel this appointment?')) {
-      try {
-        const token = localStorage.getItem('token')
-        await fetch(`http://localhost:5000/api/appointments/${backend_id}`, {
-          method: 'DELETE',
-          headers: { 'Authorization': `Bearer ${token}` }
-        })
-        fetchAppointments()
-        setSelectedAppointment(null)
-      } catch (error) {
-        console.error(error)
-      }
-    }
+  const canCheckIn = (appointment: Appointment) => {
+    return appointment.status === 'upcoming' || appointment.status === 'allocated' || appointment.status === 'arrived'
   }
 
-  // Removed unused handleDeleteAppointment function
+  const canMarkAsArrived = (appointment: Appointment) => {
+    return appointment.status === 'upcoming' || appointment.status === 'allocated'
+  }
+
+  const handleCancelAppointment = async (appointmentId: string, backend_id?: number) => {
+    if (!backend_id) return;
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+      await authFetch(`${apiUrl}/api/v1/appointments/${backend_id}`, {
+        method: 'DELETE'
+      });
+      fetchAppointments();
+      setSelectedAppointment(null);
+      pushToast('success', 'Appointment cancelled successfully.');
+    } catch (error) {
+      pushToast('error', 'Failed to cancel appointment. Please try again.');
+    }
+  };
+
+  const handleMarkAsArrived = async (appointmentId: string, backend_id?: number) => {
+    if (!backend_id) return;
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+      const response = await authFetch(`${apiUrl}/api/v1/patients/appointments/${backend_id}/arrive`, {
+        method: 'POST'
+      });
+      if (!response.ok) throw new Error('Failed to mark as arrived');
+      fetchAppointments();
+      pushToast('success', 'You have been marked as arrived. Staff can now see your notification.');
+    } catch (error) {
+      pushToast('error', 'Failed to mark as arrived. Please try again.');
+    }
+  };
 
   const getStatusBadge = (status: string) => {
     const badges = {
       'upcoming': 'bg-blue-100 text-blue-700',
+      'allocated': 'bg-green-100 text-green-700',
       'completed': 'bg-gray-100 text-gray-700',
       'cancelled': 'bg-red-100 text-red-700',
-      'ongoing': 'bg-blue-100 text-blue-700'
+      'ongoing': 'bg-blue-100 text-blue-700',
+      'arrived': 'bg-green-100 text-green-700'
     }
     return badges[status as keyof typeof badges] || 'bg-gray-100 text-gray-700'
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
+    <>
+      <ToastStack toasts={toasts} onDismiss={dismissToast} />
+      <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-7xl mx-auto space-y-6">
         {/* Header Section */}
         <div className="flex justify-between items-center mb-6">
           <div>
+            <h1 className="text-2xl font-bold text-gray-900">My Appointments</h1>
             <p className="text-gray-600">
-              Manage your upcoming and past appointments
+              Track booking status, open your QR code, and notify staff when you arrive.
             </p>
           </div>
           <Button 
@@ -123,11 +241,26 @@ export default function AppointmentsPage() {
           </Button>
         </div>
 
+        <Card className="border-0 bg-blue-50 shadow-sm">
+          <CardContent className="px-5 py-4">
+            <div className="grid gap-3 md:grid-cols-2">
+              <div>
+                <p className="text-sm font-semibold text-blue-900">How to use this page</p>
+                <p className="text-sm text-blue-800">Use Check-In to open your QR code at reception. Use Mark as Arrived once you are physically at the hospital.</p>
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-blue-900">Doctor assignment</p>
+                <p className="text-sm text-blue-800">Patients book first. Staff assign the doctor later based on availability and maximum patient limits.</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Filter Tabs */}
-        <div className="flex gap-2 mb-4">
+        <div className="flex flex-wrap gap-2 mb-4">
           {[
             { key: 'all', label: 'All', count: appointments.length },
-            { key: 'upcoming', label: 'Upcoming', count: appointments.filter(a => a.status === 'upcoming').length },
+            { key: 'upcoming', label: 'Upcoming', count: appointments.filter(a => a.status === 'upcoming' || a.status === 'allocated').length },
             { key: 'completed', label: 'Completed', count: appointments.filter(a => a.status === 'completed').length },
             { key: 'cancelled', label: 'Cancelled', count: appointments.filter(a => a.status === 'cancelled').length }
           ].map((filter) => (
@@ -189,22 +322,22 @@ export default function AppointmentsPage() {
                         <td className="px-6 py-4">
                           <span className="text-gray-700">{appointment.time}</span>
                         </td>
-                        <td className="px-6 py-4">
-                          <span className="font-medium text-gray-900">{appointment.doctor}</span>
+                        <td className="px-6 py-4 max-w-[220px]">
+                          <span className="font-medium text-gray-900 block leading-snug">{appointment.doctor}</span>
                         </td>
-                        <td className="px-6 py-4">
-                          <span className="text-gray-600">{appointment.specialty}</span>
+                        <td className="px-6 py-4 max-w-[180px]">
+                          <span className="text-gray-600 block leading-snug">{appointment.specialty}</span>
                         </td>
                         <td className="px-6 py-4">
                           <span className="font-medium" style={{ color: '#02006c' }}>#{appointment.queueNumber}</span>
                         </td>
                         <td className="px-6 py-4">
-                          <span className={`px-3 py-1 rounded-full text-xs font-medium ${getStatusBadge(appointment.status)}`}>
-                            {appointment.status.charAt(0).toUpperCase() + appointment.status.slice(1)}
+                          <span className={`inline-flex px-3 py-1 rounded-full text-xs font-medium ${getStatusBadge(appointment.status)}`}>
+                            {getAppointmentStatusLabel(appointment.status)}
                           </span>
                         </td>
                         <td className="px-6 py-4">
-                          <div className="flex gap-2">
+                          <div className="flex flex-wrap gap-2 min-w-[260px]">
                             <Button
                               size="sm"
                               variant="outline"
@@ -212,21 +345,34 @@ export default function AppointmentsPage() {
                               onClick={() => setSelectedAppointment(appointment)}
                             >
                               <Eye className="h-4 w-4 mr-1" />
-                              View Details
+                              Details
                             </Button>
-                            {appointment.status === 'upcoming' && (
-                              <Button
-                                size="sm"
-                                className="text-white text-sm"
-                                style={{ backgroundColor: '#02006c' }}
-                                onClick={() => {
-                                  setSelectedAppointment(appointment)
-                                  setShowQR(true)
-                                }}
-                              >
-                                <CheckCircle className="h-4 w-4 mr-1" />
-                                Check-In
-                              </Button>
+                            {canCheckIn(appointment) && (
+                              <>
+                                <Button
+                                  size="sm"
+                                  className="text-white text-sm"
+                                  style={{ backgroundColor: '#02006c' }}
+                                  onClick={() => {
+                                    setSelectedAppointment(appointment)
+                                    setShowQR(true)
+                                  }}
+                                >
+                                  <CheckCircle className="h-4 w-4 mr-1" />
+                                  Show QR
+                                </Button>
+                                {canMarkAsArrived(appointment) && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="text-sm border-emerald-400 text-emerald-700 hover:bg-emerald-50"
+                                    onClick={() => handleMarkAsArrived(appointment.id, appointment.backend_id)}
+                                  >
+                                    <Bell className="h-4 w-4 mr-1" />
+                                    I Arrived
+                                  </Button>
+                                )}
+                              </>
                             )}
                           </div>
                         </td>
@@ -275,7 +421,7 @@ export default function AppointmentsPage() {
                       <p className="text-lg font-bold text-gray-900">{selectedAppointment.id}</p>
                     </div>
                     <span className={`px-4 py-2 rounded-full text-sm font-semibold ${getStatusBadge(selectedAppointment.status)}`}>
-                      {selectedAppointment.status.charAt(0).toUpperCase() + selectedAppointment.status.slice(1)}
+                      {getAppointmentStatusLabel(selectedAppointment.status)}
                     </span>
                   </div>
 
@@ -360,7 +506,7 @@ export default function AppointmentsPage() {
                       <QrCode className="h-4 w-4 mr-2" />
                       View QR Code
                     </Button>
-                    {selectedAppointment.status === 'upcoming' && (
+                    {(selectedAppointment.status === 'upcoming' || selectedAppointment.status === 'allocated') && (
                       <Button 
                         variant="outline"
                         className="flex-1 border-red-300 text-red-600 hover:bg-red-50"
@@ -402,7 +548,19 @@ export default function AppointmentsPage() {
                     <div className="bg-white p-6 rounded-lg border-2 border-gray-200 flex items-center justify-center">
                       <div className="text-center">
                         <div className="w-48 h-48 bg-white flex items-center justify-center mx-auto">
-                          <img src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${selectedAppointment.backend_id}`} alt="QR Code" />
+                          {(() => {
+                            const raw = selectedAppointment.qrCode || ""
+                            const looksLikePath = raw.includes("\\") || raw.includes("/")
+                            const payload = looksLikePath || !raw
+                              ? `apt:${selectedAppointment.backend_id || selectedAppointment.id}|date:${selectedAppointment.date}|time:${selectedAppointment.time}`
+                              : raw
+                            return (
+                              <img
+                                src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(payload)}`}
+                                alt="QR Code"
+                              />
+                            )
+                          })()}
                         </div>
                         <p className="text-sm text-gray-600 font-medium">Scan at hospital reception</p>
                       </div>
@@ -459,5 +617,6 @@ export default function AppointmentsPage() {
         )}
       </div>
     </div>
+    </>
   )
 }

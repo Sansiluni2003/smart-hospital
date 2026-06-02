@@ -1,21 +1,26 @@
 from pydantic import BaseModel
 from typing import Optional
+from datetime import time
 
 class ClinicBase(BaseModel):
     Name: str
-    Location: Optional[str] = None
-    MaxPatients: Optional[int] = None
+    OperatingDays: Optional[str] = "Weekdays"
+    StartTime: Optional[time] = None
+    EndTime: Optional[time] = None
+    MaxPatients: Optional[int] = 100
 
 class ClinicCreate(ClinicBase):
     pass
 
 class ClinicUpdate(BaseModel):
     Name: Optional[str] = None
-    Location: Optional[str] = None
+    OperatingDays: Optional[str] = None
+    StartTime: Optional[time] = None
+    EndTime: Optional[time] = None
     MaxPatients: Optional[int] = None
 
 class ClinicResponse(ClinicBase):
-    Clinic_ID: int
+    ClinicID: int
 
     class Config:
         orm_mode = True

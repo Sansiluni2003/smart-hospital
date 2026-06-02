@@ -1,25 +1,27 @@
 from pydantic import BaseModel
 from typing import Optional
-from datetime import date
+from datetime import date, time
 
 class DoctorScheduleBase(BaseModel):
-    Doctor_ID: int
-    Clinic_ID: int
-    ScheduleDate: date
-    StartTime: str
-    EndTime: str
-    max_patients: Optional[int] = 10  # New field for maximum patients per schedule
+    DoctorID: Optional[int] = None
+    AvailableDate: date
+    StartTime: time
+    EndTime: time
+    Status: Optional[str] = "Available"
+    max_patients: Optional[int] = 10
 
 class DoctorScheduleCreate(DoctorScheduleBase):
     pass
 
 class DoctorScheduleUpdate(BaseModel):
-    ScheduleDate: Optional[date] = None
-    StartTime: Optional[str] = None
-    EndTime: Optional[str] = None
+    AvailableDate: Optional[date] = None
+    StartTime: Optional[time] = None
+    EndTime: Optional[time] = None
+    Status: Optional[str] = None
     max_patients: Optional[int] = None
+
 class DoctorScheduleResponse(DoctorScheduleBase):
-    Schedule_ID: int
+    ScheduleID: int
 
     class Config:
-        orm_mode = True
+        from_attributes = True

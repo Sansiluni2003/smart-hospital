@@ -9,6 +9,7 @@ import {
   Plus, FileText, ArrowRight, Activity
 } from "lucide-react"
 import Link from "next/link"
+import { authFetch } from "@/lib/authFetch";
 
 interface AppointmentData {
   id: number
@@ -32,12 +33,12 @@ export default function DashboardPage() {
     const userStr = localStorage.getItem('user')
     if (userStr) {
       const user = JSON.parse(userStr)
-      if (user.role !== 'patient') {
+      if (user.Role !== 'Patient') {
         router.push('/')
         return
       }
-      setPatientName(user.full_name || user.username)
-      setOpdId(user.opd_id || '')
+      setPatientName(user.Name || user.Email)
+      setOpdId(user.Patient_ID || '')
     } else {
       router.push('/login')
       return
@@ -48,10 +49,13 @@ export default function DashboardPage() {
 
   const fetchAppointments = async () => {
     try {
-      const token = localStorage.getItem('token')
-      const response = await fetch('http://localhost:5000/api/appointments/', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
+      const userStr = localStorage.getItem('user')
+      if (!userStr) return
+      const user = JSON.parse(userStr)
+      const patientId = user.Patient_ID
+      if (!patientId) return
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
+      const response = await authFetch(`${apiUrl}/api/v1/patients/${patientId}/appointments`)
       if (response.status === 401 || response.status === 422) {
         localStorage.removeItem('token')
         localStorage.removeItem('user')
@@ -69,10 +73,21 @@ export default function DashboardPage() {
     }
   }
 
-  const todayStr = new Date().toISOString().split('T')[0]
-  const todayAppointments = appointments.filter(a => a.appointment_date === todayStr && a.status === 'scheduled')
-  const upcomingAppointments = appointments.filter(a => a.appointment_date >= todayStr && a.status === 'scheduled')
-  const completedAppointments = appointments.filter(a => a.status === 'completed')
+  const todayStr = new Date().toLocaleDateString('en-CA') // YYYY-MM-DD in local time
+  const todayAppointments = appointments.filter((a: any) => {
+    const d = a.AppointmentDate || a.appointment_date || ''
+    const s = (a.Status || a.status || '').toLowerCase()
+    return d === todayStr && s !== 'completed' && s !== 'cancelled'
+  })
+  const upcomingAppointments = appointments.filter((a: any) => {
+    const d = a.AppointmentDate || a.appointment_date || ''
+    const s = (a.Status || a.status || '').toLowerCase()
+    return d >= todayStr && s !== 'completed' && s !== 'cancelled'
+  })
+  const completedAppointments = appointments.filter((a: any) => {
+    const s = (a.Status || a.status || '').toLowerCase()
+    return s === 'completed'
+  })
 
   const getGreeting = () => {
     const hour = new Date().getHours()
@@ -110,7 +125,7 @@ export default function DashboardPage() {
             <div>
               <p className="font-medium text-green-800">You have {todayAppointments.length} appointment(s) today!</p>
               <p className="text-sm text-green-700">
-                Next: Dr. {todayAppointments[0].doctor_name} at {todayAppointments[0].appointment_time}
+                Next: {(todayAppointments[0] as any).Doctor_Name || 'Doctor to be assigned'} at {(todayAppointments[0] as any).AppointmentTime || 'TBD'}
               </p>
             </div>
           </div>
@@ -203,20 +218,20 @@ export default function DashboardPage() {
             </div>
           ) : todayAppointments.length > 0 ? (
             <div className="space-y-4">
-              {todayAppointments.map((apt) => (
-                <div key={apt.id} className="bg-green-50 border border-green-200 rounded-xl p-4">
+              {todayAppointments.map((apt: any) => (
+                <div key={apt.Appointment_ID} className="bg-green-50 border border-green-200 rounded-xl p-4">
                   <div className="flex items-center justify-between">
                     <div>
                       <div className="flex items-center space-x-2 mb-2">
                         <CheckCircle className="h-5 w-5 text-green-600" />
                         <span className="font-medium text-green-800">Appointment Confirmed</span>
                       </div>
-                      <p className="text-gray-700 font-medium">Dr. {apt.doctor_name} - {apt.specialty}</p>
-                      <p className="text-sm text-gray-600">{apt.appointment_time} • {apt.location || 'Main Building'} • Queue #{apt.queue_number}</p>
+                      <p className="text-gray-700 font-medium">{apt.Doctor_Name || 'Doctor to be assigned'}</p>
+                      <p className="text-sm text-gray-600">{apt.AppointmentTime || 'Time TBD'} • Queue #{apt.Queue_Number || '-'}</p>
                     </div>
                     <div className="text-right">
                       <p className="text-sm text-gray-500">Queue Position</p>
-                      <p className="text-2xl font-bold text-green-600">#{apt.queue_number}</p>
+                      <p className="text-2xl font-bold text-green-600">#{apt.Queue_Number || '-'}</p>
                     </div>
                   </div>
                 </div>
@@ -294,22 +309,22 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent className="p-0">
             <div className="divide-y divide-gray-100">
-              {upcomingAppointments.slice(0, 5).map((apt) => (
-                <div key={apt.id} className="flex items-center justify-between p-4 hover:bg-gray-50 transition-colors">
+              {upcomingAppointments.slice(0, 5).map((apt: any) => (
+                <div key={apt.Appointment_ID} className="flex items-center justify-between p-4 hover:bg-gray-50 transition-colors">
                   <div className="flex items-center space-x-4">
                     <div className="w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-bold" style={{ backgroundColor: '#02006c' }}>
-                      #{apt.queue_number}
+                      #{apt.Queue_Number || '?'}
                     </div>
                     <div>
-                      <p className="font-medium text-gray-900">Dr. {apt.doctor_name}</p>
-                      <p className="text-sm text-gray-600">{apt.specialty}</p>
+                      <p className="font-medium text-gray-900">{apt.Doctor_Name || 'Doctor to be assigned'}</p>
+                      <p className="text-sm text-gray-600">{apt.Speciality || ''}</p>
                     </div>
                   </div>
                   <div className="text-right">
                     <p className="text-sm font-medium text-gray-900">
-                      {new Date(apt.appointment_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      {apt.AppointmentDate ? new Date(apt.AppointmentDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '-'}
                     </p>
-                    <p className="text-sm text-gray-600">{apt.appointment_time}</p>
+                    <p className="text-sm text-gray-600">{apt.AppointmentTime || 'Time TBD'}</p>
                   </div>
                 </div>
               ))}

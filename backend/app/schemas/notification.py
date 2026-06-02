@@ -3,16 +3,17 @@ from typing import Optional
 from datetime import datetime
 
 class NotificationBase(BaseModel):
-    UserID: int
+    Patient_ID: int
     Message: str
-    CreatedAt: datetime
-    Read: Optional[bool] = False
+    NotificationType: str
+    Status: Optional[str] = "Pending"
+    Sent_Time: Optional[datetime] = None
 
 class NotificationCreate(NotificationBase):
     pass
 
 class NotificationUpdate(BaseModel):
-    Read: Optional[bool] = None
+    Status: Optional[str] = None
 
 class NotificationResponse(NotificationBase):
     Notification_ID: int

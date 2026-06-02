@@ -8,7 +8,7 @@ from app.dependencies import get_db
 from fastapi import Depends
 from app.core.security import require_role
 from app.models.user import UserRole
-router = APIRouter(prefix="/appointments", tags=["appointments"])
+router = APIRouter(tags=["appointments"])
 
 @router.post("/", response_model=AppointmentResponse, dependencies=[Depends(require_role(UserRole.Staff))])
 def create_appointment_api(appointment: AppointmentCreate, db: Session = Depends(get_db)):

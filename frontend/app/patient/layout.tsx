@@ -17,6 +17,7 @@ import {
   Plus
 } from "lucide-react"
 import { ThemeToggle } from "@/components/ui/theme-toggle"
+import RealtimeNotifications from "@/components/RealtimeNotifications"
 
 const navigationItems = [
   { id: 'overview', label: 'Dashboard', icon: Home, href: '/patient/dashboard' },
@@ -145,6 +146,7 @@ export default function PatientLayout({
           {children}
         </main>
       </div>
+      <RealtimeNotifications />
 
       {/* Sidebar Overlay for Mobile */}
       {sidebarOpen && (

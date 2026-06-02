@@ -1,37 +1,185 @@
 "use client";
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { authFetch } from "@/lib/authFetch";
 
-// Dummy data for demonstration; replace with API data
-const initialDoctors = [
-  { doctorId: "D001", name: "Dr. John Doe", email: "john@example.com", phone: "1234567890", speciality: "Cardiology", licenseNumber: "MBBS123" },
-  { doctorId: "D002", name: "Dr. Jane Smith", email: "jane@example.com", phone: "9876543210", speciality: "Neurology", licenseNumber: "MBBS456" },
-];
-const initialStaff = [
-  { staffId: "S001", name: "Alice Brown", email: "alice@example.com", phone: "5551234567", jobTitle: "Receptionist", clinicId: "C01" },
-  { staffId: "S002", name: "Bob White", email: "bob@example.com", phone: "5559876543", jobTitle: "Nurse", clinicId: "C02" },
-];
+type User = {
+  UserID: number;
+  Email: string;
+  Role: "Patient" | "Doctor" | "Staff" | "Admin";
+  CreatedAt: string;
+};
+
+type Doctor = {
+  Doctor_ID: number;
+  UserID: number;
+  Name: string;
+  Phone_No?: string | null;
+  Speciality?: string | null;
+  AverageConsultationMinutes?: number | null;
+};
+
+type Staff = {
+  Staff_ID: number;
+  UserID: number;
+  Name: string;
+  Phone_No?: string | null;
+  JobTitle?: string | null;
+  ClinicID: number;
+};
+
+const getApiErrorMessage = (payload: any, fallback: string) => {
+  const detail = payload?.detail;
+  if (Array.isArray(detail)) {
+    return detail.map((item: any) => item?.msg || JSON.stringify(item)).join("; ");
+  }
+  if (typeof detail === "string") {
+    return detail;
+  }
+  return fallback;
+};
 
 export default function AdminUsersPage() {
-  const [doctors, setDoctors] = useState(initialDoctors);
-  const [staff, setStaff] = useState(initialStaff);
+  const router = useRouter();
+  const [doctors, setDoctors] = useState<Doctor[]>([]);
+  const [staff, setStaff] = useState<Staff[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // Placeholder handlers for add, update, delete
-  const handleAddDoctor = () => alert("Add Doctor functionality coming soon!");
-  const handleUpdateDoctor = (id: string) => alert(`Update Doctor ${id} functionality coming soon!`);
-  const handleDeleteDoctor = (id: string) => setDoctors(doctors.filter(d => d.doctorId !== id));
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+  const adminApiBase = `${apiUrl}/api/v1/admin/admin`;
 
-  const handleAddStaff = () => alert("Add Staff functionality coming soon!");
-  const handleUpdateStaff = (id: string) => alert(`Update Staff ${id} functionality coming soon!`);
-  const handleDeleteStaff = (id: string) => setStaff(staff.filter(s => s.staffId !== id));
+  const userEmailById = useMemo(() => {
+    const map = new Map<number, string>();
+    users.forEach((user) => map.set(user.UserID, user.Email));
+    return map;
+  }, [users]);
+
+  const fetchAll = async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const [usersResponse, doctorsResponse, staffResponse] = await Promise.all([
+        authFetch(`${adminApiBase}/users/`),
+        authFetch(`${adminApiBase}/doctors/`),
+        authFetch(`${adminApiBase}/staffs/`),
+      ]);
+
+      if (!usersResponse.ok || !doctorsResponse.ok || !staffResponse.ok) {
+        if (usersResponse.status === 401 || doctorsResponse.status === 401 || staffResponse.status === 401) {
+          setError("Session expired or invalid token. Please log in again as Admin.");
+          router.push("/login");
+          return;
+        }
+        if (usersResponse.status === 403 || doctorsResponse.status === 403 || staffResponse.status === 403) {
+          setError("Only Admin role can access manage users.");
+          router.push("/login");
+          return;
+        }
+        throw new Error("Failed to load users");
+      }
+
+      const [usersData, doctorsData, staffData] = await Promise.all([
+        usersResponse.json(),
+        doctorsResponse.json(),
+        staffResponse.json(),
+      ]);
+
+      setUsers(usersData);
+      setDoctors(doctorsData);
+      setStaff(staffData);
+    } catch (err: any) {
+      setError(err?.message || "Failed to load users");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    const userStr = localStorage.getItem("user");
+
+    if (!token || !userStr) {
+      setError("Admin login is required. Please log in again.");
+      router.push("/login");
+      return;
+    }
+
+    try {
+      const user = JSON.parse(userStr);
+      if (user?.Role !== "Admin") {
+        setError("Only admin users can access this page.");
+        router.push("/login");
+        return;
+      }
+    } catch {
+      setError("Invalid session. Please log in again.");
+      router.push("/login");
+      return;
+    }
+
+    fetchAll();
+  }, [router]);
+
+  const handleDeleteDoctor = async (doctorId: number) => {
+    if (!confirm(`Delete doctor #${doctorId}?`)) return;
+
+    try {
+      const response = await authFetch(`${adminApiBase}/doctor/${doctorId}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(getApiErrorMessage(payload, "Failed to delete doctor"));
+      }
+
+      await fetchAll();
+    } catch (err: any) {
+      alert(err?.message || "Failed to delete doctor");
+    }
+  };
+
+  const handleDeleteStaff = async (staffId: number) => {
+    if (!confirm(`Delete staff #${staffId}?`)) return;
+
+    try {
+      const response = await authFetch(`${adminApiBase}/staff/${staffId}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(getApiErrorMessage(payload, "Failed to delete staff"));
+      }
+
+      await fetchAll();
+    } catch (err: any) {
+      alert(err?.message || "Failed to delete staff");
+    }
+  };
 
   return (
     <div className="p-6">
-      <h1 className="text-2xl font-bold mb-6">Manage Users</h1>
+      <div className="mb-6 flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Manage Users</h1>
+        <Link
+          href="/admin/register"
+          className="rounded-lg bg-purple-700 px-4 py-2 font-medium text-white transition hover:bg-purple-800"
+        >
+          Create Doctor/Staff
+        </Link>
+      </div>
+
+      {error && <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
 
       <div className="mb-10">
         <div className="flex justify-between items-center mb-2">
           <h2 className="text-lg font-semibold">Doctors</h2>
-          <button onClick={handleAddDoctor} className="bg-purple-700 text-white px-4 py-2 rounded-lg font-medium hover:bg-purple-800 transition">Add Doctor</button>
+          <span className="text-sm text-gray-500">Total: {doctors.length}</span>
         </div>
         <div className="overflow-x-auto">
           <table className="min-w-full bg-white rounded-lg shadow">
@@ -42,22 +190,29 @@ export default function AdminUsersPage() {
                 <th className="px-4 py-2">Email</th>
                 <th className="px-4 py-2">Phone</th>
                 <th className="px-4 py-2">Speciality</th>
-                <th className="px-4 py-2">License No</th>
+                <th className="px-4 py-2">Avg. Minutes</th>
                 <th className="px-4 py-2">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {doctors.map((doc) => (
-                <tr key={doc.doctorId} className="border-b">
-                  <td className="px-4 py-2">{doc.doctorId}</td>
-                  <td className="px-4 py-2">{doc.name}</td>
-                  <td className="px-4 py-2">{doc.email}</td>
-                  <td className="px-4 py-2">{doc.phone}</td>
-                  <td className="px-4 py-2">{doc.speciality}</td>
-                  <td className="px-4 py-2">{doc.licenseNumber}</td>
+              {loading ? (
+                <tr>
+                  <td className="px-4 py-3 text-center text-gray-500" colSpan={7}>Loading doctors...</td>
+                </tr>
+              ) : doctors.length === 0 ? (
+                <tr>
+                  <td className="px-4 py-3 text-center text-gray-500" colSpan={7}>No doctors found.</td>
+                </tr>
+              ) : doctors.map((doc) => (
+                <tr key={doc.Doctor_ID} className="border-b">
+                  <td className="px-4 py-2">{doc.Doctor_ID}</td>
+                  <td className="px-4 py-2">{doc.Name}</td>
+                  <td className="px-4 py-2">{userEmailById.get(doc.UserID) || "-"}</td>
+                  <td className="px-4 py-2">{doc.Phone_No || "-"}</td>
+                  <td className="px-4 py-2">{doc.Speciality || "-"}</td>
+                  <td className="px-4 py-2">{doc.AverageConsultationMinutes || 10}</td>
                   <td className="px-4 py-2 space-x-2">
-                    <button onClick={() => handleUpdateDoctor(doc.doctorId)} className="bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700">Update</button>
-                    <button onClick={() => handleDeleteDoctor(doc.doctorId)} className="bg-red-600 text-white px-3 py-1 rounded hover:bg-red-700">Delete</button>
+                    <button onClick={() => handleDeleteDoctor(doc.Doctor_ID)} className="bg-red-600 text-white px-3 py-1 rounded hover:bg-red-700">Delete</button>
                   </td>
                 </tr>
               ))}
@@ -69,7 +224,7 @@ export default function AdminUsersPage() {
       <div>
         <div className="flex justify-between items-center mb-2">
           <h2 className="text-lg font-semibold">Staff</h2>
-          <button onClick={handleAddStaff} className="bg-purple-700 text-white px-4 py-2 rounded-lg font-medium hover:bg-purple-800 transition">Add Staff</button>
+          <span className="text-sm text-gray-500">Total: {staff.length}</span>
         </div>
         <div className="overflow-x-auto">
           <table className="min-w-full bg-white rounded-lg shadow">
@@ -85,17 +240,24 @@ export default function AdminUsersPage() {
               </tr>
             </thead>
             <tbody>
-              {staff.map((s) => (
-                <tr key={s.staffId} className="border-b">
-                  <td className="px-4 py-2">{s.staffId}</td>
-                  <td className="px-4 py-2">{s.name}</td>
-                  <td className="px-4 py-2">{s.email}</td>
-                  <td className="px-4 py-2">{s.phone}</td>
-                  <td className="px-4 py-2">{s.jobTitle}</td>
-                  <td className="px-4 py-2">{s.clinicId}</td>
+              {loading ? (
+                <tr>
+                  <td className="px-4 py-3 text-center text-gray-500" colSpan={7}>Loading staff...</td>
+                </tr>
+              ) : staff.length === 0 ? (
+                <tr>
+                  <td className="px-4 py-3 text-center text-gray-500" colSpan={7}>No staff found.</td>
+                </tr>
+              ) : staff.map((member) => (
+                <tr key={member.Staff_ID} className="border-b">
+                  <td className="px-4 py-2">{member.Staff_ID}</td>
+                  <td className="px-4 py-2">{member.Name}</td>
+                  <td className="px-4 py-2">{userEmailById.get(member.UserID) || "-"}</td>
+                  <td className="px-4 py-2">{member.Phone_No || "-"}</td>
+                  <td className="px-4 py-2">{member.JobTitle || "-"}</td>
+                  <td className="px-4 py-2">{member.ClinicID}</td>
                   <td className="px-4 py-2 space-x-2">
-                    <button onClick={() => handleUpdateStaff(s.staffId)} className="bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700">Update</button>
-                    <button onClick={() => handleDeleteStaff(s.staffId)} className="bg-red-600 text-white px-3 py-1 rounded hover:bg-red-700">Delete</button>
+                    <button onClick={() => handleDeleteStaff(member.Staff_ID)} className="bg-red-600 text-white px-3 py-1 rounded hover:bg-red-700">Delete</button>
                   </td>
                 </tr>
               ))}

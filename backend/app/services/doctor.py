@@ -1,37 +1,69 @@
+from datetime import date, datetime
+
 from sqlalchemy.orm import Session
+
+from app.models.appointment import Appointment, AppointmentStatus
 from app.models.doctor import Doctor
 from app.models.doctor_schedule import DoctorSchedule, ScheduleStatus
-from app.models.live_queue import LiveQueue
+from app.models.live_queue import LiveQueue, LiveQueueStatus
 from app.models.medical_record import MedicalRecord
 from app.models.patient import Patient
-from app.schemas.doctor import DoctorCreate, DoctorUpdate
+from app.models.user import User
+from app.core.security import get_password_hash, verify_password
+from app.schemas.doctor import DoctorProfileUpdate, DoctorUpdate
 from app.schemas.doctor_schedule import DoctorScheduleCreate, DoctorScheduleUpdate
-from datetime import datetime, date, time
-from app.utils.notification import create_in_app_notification
 
-# CRUD: Create doctor (admin)
-def create_doctor(db: Session, doctor: DoctorCreate):
-    db_doctor = Doctor(
-        UserID=doctor.UserID,
-        Name=doctor.Name,
-        Speciality=doctor.Specialty,
-        Phone_No=doctor.Phone_No,
-        DateOfBirth=doctor.DateOfBirth
-    )
-    db.add(db_doctor)
-    db.commit()
-    db.refresh(db_doctor)
-    return db_doctor
 
-# CRUD: Get doctor by ID
-def get_doctor(db: Session, doctor_id: int):
-    return db.query(Doctor).filter(Doctor.Doctor_ID == doctor_id).first()
+WAITING_APPOINTMENT_STATUSES = {
+    AppointmentStatus.Allocated,
+    AppointmentStatus.Arrived,
+}
 
-# CRUD: Get all doctors
-def get_doctors(db: Session, skip: int = 0, limit: int = 100):
-    return db.query(Doctor).offset(skip).limit(limit).all()
 
-# CRUD: Update doctor
+def _get_doctor_by_user_id(db: Session, user_id: int):
+    return db.query(Doctor).filter(Doctor.UserID == user_id).first()
+
+
+def _get_doctor_appointment(db: Session, doctor_id: int, appointment_id: int):
+    return db.query(Appointment).filter(
+        Appointment.Appointment_ID == appointment_id,
+        Appointment.Doctor_ID == doctor_id,
+    ).first()
+
+
+def _build_queue_item(db: Session, appointment: Appointment):
+    patient = db.query(Patient).filter(Patient.Patient_ID == appointment.Patient_ID).first()
+    user = db.query(User).filter(User.UserID == patient.UserID).first() if patient else None
+    status_value = appointment.Status.value if hasattr(appointment.Status, "value") else str(appointment.Status)
+
+    if status_value == AppointmentStatus.In_Progress.value:
+        queue_status = "in-consultation"
+    elif status_value == AppointmentStatus.Completed.value:
+        queue_status = "completed"
+    elif status_value == AppointmentStatus.Skipped.value:
+        queue_status = "skipped"
+    else:
+        queue_status = "waiting"
+
+    return {
+        "queue_id": appointment.Appointment_ID,
+        "appointment_id": appointment.Appointment_ID,
+        "queue_number": appointment.Queue_Number or 0,
+        "status": queue_status,
+        "patient_name": patient.Name if patient else f"Patient #{appointment.Patient_ID}",
+        "arrived_at": f"{appointment.AppointmentDate}T{appointment.AppointmentTime or '09:00:00'}",
+        "appointment_date": appointment.AppointmentDate.isoformat() if appointment.AppointmentDate else None,
+        "appointment_time": str(appointment.AppointmentTime) if appointment.AppointmentTime else None,
+        "notes": appointment.Notes,
+        "patient_id": appointment.Patient_ID,
+        "email": user.Email if user else None,
+        "phone": patient.Phone_No if patient else None,
+        "address": patient.Address if patient else None,
+        "opd_id": patient.OPD_Id if patient else None,
+        "date_of_birth": patient.DateOfBirth.isoformat() if patient and patient.DateOfBirth else None,
+    }
+
+
 def update_doctor(db: Session, doctor_id: int, doctor_update: DoctorUpdate):
     db_doctor = db.query(Doctor).filter(Doctor.Doctor_ID == doctor_id).first()
     if not db_doctor:
@@ -43,88 +75,349 @@ def update_doctor(db: Session, doctor_id: int, doctor_update: DoctorUpdate):
     db.refresh(db_doctor)
     return db_doctor
 
-# CRUD: Delete doctor
-def delete_doctor(db: Session, doctor_id: int):
-    db_doctor = db.query(Doctor).filter(Doctor.Doctor_ID == doctor_id).first()
-    if not db_doctor:
-        return None
-    db.delete(db_doctor)
-    db.commit()
-    return db_doctor
 
-# Doctor: Update availability and consultation schedules
+def get_doctor_appointment_for_user(db: Session, user_id: int, appointment_id: int):
+    doctor = _get_doctor_by_user_id(db, user_id)
+    if not doctor:
+        return None
+    return _get_doctor_appointment(db, doctor.Doctor_ID, appointment_id)
+
+
+def get_doctor_profile(db: Session, user_id: int):
+    doctor = _get_doctor_by_user_id(db, user_id)
+    if not doctor:
+        return None
+    user = db.query(User).filter(User.UserID == doctor.UserID).first()
+    return {
+        "Doctor_ID": doctor.Doctor_ID,
+        "UserID": doctor.UserID,
+        "Name": doctor.Name,
+        "Speciality": doctor.Speciality,
+        "Phone_No": doctor.Phone_No,
+        "AverageConsultationMinutes": doctor.AverageConsultationMinutes,
+        "Email": user.Email if user else None,
+        "CreatedAt": user.CreatedAt.isoformat() if user and user.CreatedAt else None,
+    }
+
+
+def update_doctor_profile(db: Session, user_id: int, profile_update: DoctorProfileUpdate):
+    doctor = _get_doctor_by_user_id(db, user_id)
+    if not doctor:
+        return None
+
+    if profile_update.Name is not None:
+        doctor.Name = profile_update.Name
+    if profile_update.Speciality is not None:
+        doctor.Speciality = profile_update.Speciality
+    if profile_update.Phone_No is not None:
+        doctor.Phone_No = profile_update.Phone_No
+
+    user = db.query(User).filter(User.UserID == doctor.UserID).first()
+    if user and profile_update.Email is not None:
+        user.Email = profile_update.Email
+
+    db.commit()
+    db.refresh(doctor)
+    return get_doctor_profile(db, user_id)
+
+
+def update_doctor_password(db: Session, user_id: int, current_password: str, new_password: str):
+    user = db.query(User).filter(User.UserID == user_id).first()
+    if not user:
+        return None
+    if not verify_password(current_password, user.Password):
+        return False
+    user.Password = get_password_hash(new_password[:72])
+    db.commit()
+    return True
+
+
+def get_doctor_dashboard(db: Session, user_id: int):
+    doctor = _get_doctor_by_user_id(db, user_id)
+    if not doctor:
+        return None
+
+    today = date.today()
+    appointments = db.query(Appointment).filter(
+        Appointment.Doctor_ID == doctor.Doctor_ID,
+        Appointment.AppointmentDate == today,
+    ).order_by(Appointment.Queue_Number, Appointment.AppointmentTime, Appointment.Appointment_ID).all()
+
+    queue_items = [_build_queue_item(db, appointment) for appointment in appointments]
+    completed = sum(1 for appointment in appointments if appointment.Status == AppointmentStatus.Completed)
+    pending = sum(1 for appointment in appointments if appointment.Status == AppointmentStatus.Pending_Allocation)
+    waiting = sum(1 for appointment in appointments if appointment.Status in WAITING_APPOINTMENT_STATUSES)
+
+    return {
+        "doctor": get_doctor_profile(db, user_id),
+        "stats": {
+            "todayPatients": len(appointments),
+            "inQueue": waiting,
+            "completed": completed,
+            "pending": pending,
+        },
+        "queue": queue_items,
+    }
+
+
+def get_doctor_queue(db: Session, user_id: int):
+    doctor = _get_doctor_by_user_id(db, user_id)
+    if not doctor:
+        return None
+
+    today = date.today()
+    appointments = db.query(Appointment).filter(
+        Appointment.Doctor_ID == doctor.Doctor_ID,
+        Appointment.AppointmentDate == today,
+        Appointment.Status.in_([
+            AppointmentStatus.Allocated,
+            AppointmentStatus.Arrived,
+            AppointmentStatus.In_Progress,
+            AppointmentStatus.Completed,
+            AppointmentStatus.Skipped,
+        ]),
+    ).order_by(Appointment.Queue_Number, Appointment.AppointmentTime, Appointment.Appointment_ID).all()
+
+    return [_build_queue_item(db, appointment) for appointment in appointments]
+
+
+def get_patient_medical_records(db: Session, patient_id: int):
+    records = db.query(MedicalRecord).filter(
+        MedicalRecord.Patient_ID == patient_id,
+    ).order_by(MedicalRecord.RecordDate.desc()).all()
+    return records
+
+
+def start_doctor_consultation(db: Session, user_id: int, appointment_id: int):
+    doctor = _get_doctor_by_user_id(db, user_id)
+    if not doctor:
+        return None
+    appointment = _get_doctor_appointment(db, doctor.Doctor_ID, appointment_id)
+    if not appointment:
+        return None
+    appointment.Status = AppointmentStatus.In_Progress
+
+    # Update LiveQueue entry to In_Consultation
+    lq_entry = db.query(LiveQueue).filter(LiveQueue.AppointmentID == appointment.Appointment_ID).first()
+    if lq_entry:
+        lq_entry.Status = LiveQueueStatus.In_Consultation
+
+    db.commit()
+    db.refresh(appointment)
+
+    # Real-time notify patient that doctor has started their consultation
+    try:
+        from app.utils.notify import notify_patient, EVT_CONSULTATION_STARTED
+        doctor_obj = db.query(Doctor).filter(Doctor.Doctor_ID == appointment.Doctor_ID).first()
+        doctor_name = doctor_obj.Name if doctor_obj else "Your doctor"
+        notify_patient(
+            db,
+            appointment.Patient_ID,
+            EVT_CONSULTATION_STARTED,
+            "Consultation Started",
+            f"{doctor_name} has started your consultation. Please proceed to the consultation room.",
+            {"appointment_id": appointment.Appointment_ID},
+        )
+    except Exception:
+        pass
+
+    return _build_queue_item(db, appointment)
+
+
+def complete_doctor_consultation(
+    db: Session,
+    user_id: int,
+    appointment_id: int,
+    consultation_notes: str | None = None,
+    prescription: str | None = None,
+    appointment_notes: str | None = None,
+):
+    doctor = _get_doctor_by_user_id(db, user_id)
+    if not doctor:
+        return None
+    appointment = _get_doctor_appointment(db, doctor.Doctor_ID, appointment_id)
+    if not appointment:
+        return None
+
+    appointment.Status = AppointmentStatus.Completed
+    if appointment_notes:
+        appointment.Notes = appointment_notes
+
+    # Update LiveQueue entry to Completed
+    lq_entry = db.query(LiveQueue).filter(LiveQueue.AppointmentID == appointment.Appointment_ID).first()
+    if lq_entry:
+        lq_entry.Status = LiveQueueStatus.Completed
+
+    record = db.query(MedicalRecord).filter(MedicalRecord.Appointment_ID == appointment.Appointment_ID).first()
+    if not record:
+        record = MedicalRecord(
+            Appointment_ID=appointment.Appointment_ID,
+            Patient_ID=appointment.Patient_ID,
+            Doctor_ID=doctor.Doctor_ID,
+            ConsultationNotes=consultation_notes,
+            Prescription=prescription,
+            RecordDate=datetime.utcnow(),
+        )
+        db.add(record)
+    else:
+        record.ConsultationNotes = consultation_notes
+        record.Prescription = prescription
+        record.RecordDate = datetime.utcnow()
+
+    db.commit()
+    db.refresh(appointment)
+    return _build_queue_item(db, appointment)
+
+
+def skip_doctor_consultation(db: Session, user_id: int, appointment_id: int):
+    doctor = _get_doctor_by_user_id(db, user_id)
+    if not doctor:
+        return None
+    appointment = _get_doctor_appointment(db, doctor.Doctor_ID, appointment_id)
+    if not appointment:
+        return None
+    appointment.Status = AppointmentStatus.Skipped
+
+    # Update LiveQueue entry to Skipped
+    lq_entry = db.query(LiveQueue).filter(LiveQueue.AppointmentID == appointment.Appointment_ID).first()
+    if lq_entry:
+        lq_entry.Status = LiveQueueStatus.Skipped
+
+    db.commit()
+    db.refresh(appointment)
+    return _build_queue_item(db, appointment)
+
+
 def update_doctor_schedule(db: Session, doctor_id: int, schedule_data: DoctorScheduleCreate):
     schedule = DoctorSchedule(
         DoctorID=doctor_id,
-        AvailableDate=schedule_data.ScheduleDate,
-        StartTime=datetime.strptime(schedule_data.StartTime, "%H:%M").time(),
-        EndTime=datetime.strptime(schedule_data.EndTime, "%H:%M").time(),
-        Status=ScheduleStatus.Available
+        AvailableDate=schedule_data.AvailableDate,
+        StartTime=schedule_data.StartTime,
+        EndTime=schedule_data.EndTime,
+        Status=ScheduleStatus.Available,
+        max_patients=schedule_data.max_patients or 10,
     )
     db.add(schedule)
     db.commit()
     db.refresh(schedule)
     return schedule
 
-# Doctor: View patient list and queue order for today
+
+def get_doctor_schedules(db: Session, user_id: int, start_date: date | None = None, end_date: date | None = None):
+    doctor = _get_doctor_by_user_id(db, user_id)
+    if not doctor:
+        return None
+
+    query = db.query(DoctorSchedule).filter(DoctorSchedule.DoctorID == doctor.Doctor_ID)
+    if start_date:
+        query = query.filter(DoctorSchedule.AvailableDate >= start_date)
+    if end_date:
+        query = query.filter(DoctorSchedule.AvailableDate <= end_date)
+
+    schedules = query.order_by(DoctorSchedule.AvailableDate, DoctorSchedule.StartTime).all()
+    return schedules
+
+
+def update_doctor_schedule_entry(db: Session, user_id: int, schedule_id: int, schedule_data: DoctorScheduleUpdate):
+    doctor = _get_doctor_by_user_id(db, user_id)
+    if not doctor:
+        return None
+
+    schedule = db.query(DoctorSchedule).filter(
+        DoctorSchedule.ScheduleID == schedule_id,
+        DoctorSchedule.DoctorID == doctor.Doctor_ID,
+    ).first()
+    if not schedule:
+        return None
+
+    for field, value in vars(schedule_data).items():
+        if value is not None:
+            setattr(schedule, field, value)
+
+    db.commit()
+    db.refresh(schedule)
+    return schedule
+
+
+def delete_doctor_schedule_entry(db: Session, user_id: int, schedule_id: int):
+    doctor = _get_doctor_by_user_id(db, user_id)
+    if not doctor:
+        return None
+
+    schedule = db.query(DoctorSchedule).filter(
+        DoctorSchedule.ScheduleID == schedule_id,
+        DoctorSchedule.DoctorID == doctor.Doctor_ID,
+    ).first()
+    if not schedule:
+        return None
+
+    db.delete(schedule)
+    db.commit()
+    return schedule
+
+
 def get_today_queue(db: Session, doctor_id: int, clinic_id: int, today: date):
-    # Get all patients in live queue for this doctor and clinic today
-    queue = db.query(LiveQueue).filter(
-        LiveQueue.Clinic_ID == clinic_id,
-        LiveQueue.Status == "Waiting"
-    ).order_by(LiveQueue.QueueNumber).all()
-    return queue
+    appointments = db.query(Appointment).filter(
+        Appointment.Doctor_ID == doctor_id,
+        Appointment.AppointmentDate == today,
+    ).order_by(Appointment.Queue_Number, Appointment.AppointmentTime, Appointment.Appointment_ID).all()
+    return [_build_queue_item(db, appointment) for appointment in appointments]
 
-# Doctor: Access digital medical histories
 
-# Doctor: Create a new medical record for a patient
 def create_medical_record(db: Session, patient_id: int, doctor_id: int, clinic_id: int, notes: str):
+    appointment = db.query(Appointment).filter(
+        Appointment.Patient_ID == patient_id,
+        Appointment.Doctor_ID == doctor_id,
+        Appointment.ClinicID == clinic_id,
+    ).order_by(Appointment.CreatedAt.desc()).first()
+    if not appointment:
+        return None
+
     record = MedicalRecord(
+        Appointment_ID=appointment.Appointment_ID,
         Patient_ID=patient_id,
         Doctor_ID=doctor_id,
-        Clinic_ID=clinic_id,
-        RecordDate=datetime.utcnow().date(),
-        Notes=notes
+        ConsultationNotes=notes,
+        Prescription=None,
+        RecordDate=datetime.utcnow(),
     )
     db.add(record)
     db.commit()
     db.refresh(record)
     return record
 
-# Doctor: Update an existing medical record
+
 def update_medical_record(db: Session, record_id: int, notes: str):
     record = db.query(MedicalRecord).filter(MedicalRecord.Record_ID == record_id).first()
     if not record:
         return None
-    record.Notes = notes
+    record.ConsultationNotes = notes
     db.commit()
     db.refresh(record)
     return record
 
-# Doctor: Record consultation outcome and mark as consulted
+
 def mark_patient_consulted(db: Session, queue_id: int, notes: str = None):
-    queue_entry = db.query(LiveQueue).filter(LiveQueue.Queue_ID == queue_id).first()
-    if not queue_entry:
+    appointment = db.query(Appointment).filter(Appointment.Appointment_ID == queue_id).first()
+    if not appointment:
         return None
-    queue_entry.Status = "Consulted"
+    appointment.Status = AppointmentStatus.Completed
     db.commit()
-    db.refresh(queue_entry)
-    # Optionally, add a medical record
+    db.refresh(appointment)
+
     if notes:
-        record = MedicalRecord(
-            Patient_ID=queue_entry.Patient_ID,
-            Doctor_ID=None,  # Set if available
-            Clinic_ID=queue_entry.Clinic_ID,
-            RecordDate=datetime.utcnow().date(),
-            Notes=notes
-        )
-        db.add(record)
-        db.commit()
-        db.refresh(record)
-    # Find next patient in queue
-    next_in_queue = db.query(LiveQueue).filter(
-        LiveQueue.Status == "Waiting"
-    ).order_by(LiveQueue.QueueNumber).first()
-    if next_in_queue:
-        create_in_app_notification(db, next_in_queue.Patient_ID, "You are next in the queue!")
-    return queue_entry
+        record = db.query(MedicalRecord).filter(MedicalRecord.Appointment_ID == appointment.Appointment_ID).first()
+        if not record:
+            record = MedicalRecord(
+                Appointment_ID=appointment.Appointment_ID,
+                Patient_ID=appointment.Patient_ID,
+                Doctor_ID=appointment.Doctor_ID,
+                ConsultationNotes=notes,
+                Prescription=None,
+                RecordDate=datetime.utcnow(),
+            )
+            db.add(record)
+            db.commit()
+            db.refresh(record)
+
+    return appointment

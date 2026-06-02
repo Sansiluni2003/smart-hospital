@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { ThemeToggle } from "@/components/ui/theme-toggle"
 import { Bell, Lock, Eye, EyeOff, CheckCircle, AlertCircle, Laptop } from "lucide-react"
+import { authFetch } from "@/lib/authFetch"
 
 export default function SettingsPage() {
   const router = useRouter()
@@ -50,17 +51,17 @@ export default function SettingsPage() {
     }
 
     try {
-      // In a real application, you'd send an API request to change the password
-      // Since there's no custom route in our simple backend for password reset,
-      // we'll simulate a successful update to enhance the frontend experience.
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      
-      setMessage({ type: "success", text: "Password updated successfully!" })
-      setFormData({
-        currentPassword: "",
-        newPassword: "",
-        confirmPassword: ""
+      const res = await authFetch(`${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"}/api/v1/patients/me/password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ CurrentPassword: formData.currentPassword, NewPassword: formData.newPassword }),
       })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error((err as any).detail || "Failed to update password")
+      }
+      setMessage({ type: "success", text: "Password updated successfully!" })
+      setFormData({ currentPassword: "", newPassword: "", confirmPassword: "" })
     } catch (error: unknown) {
       const errMsg = error instanceof Error ? error.message : "Failed to update password"
       setMessage({ type: "error", text: errMsg })

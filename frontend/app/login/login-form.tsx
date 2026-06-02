@@ -90,89 +90,57 @@ export function LoginForm() {
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    
-    if (!validateForm()) return
-    
-    setIsLoading(true)
-    
+    e.preventDefault();
+
+    if (!validateForm()) return;
+
+    setIsLoading(true);
+
     try {
-      // Try backend login first; if backend not available or returns error,
-      // fallback to demo login that accepts any identifier/email for the
-      // selected role so the portals can be used without a backend.
-      const response = await fetch('http://localhost:5000/api/auth/login', {
-        method: 'POST',
+      const params = new URLSearchParams();
+      params.append("username", formData.identifier);
+      params.append("password", formData.password);
+
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/login`, {
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/x-www-form-urlencoded",
         },
-        body: JSON.stringify({
-          username: formData.identifier,
-          password: formData.password
-        }),
-      })
+        body: params.toString(),
+      });
 
       if (response.ok) {
-        const data = await response.json()
-        // Store token and user info
-        localStorage.setItem('token', data.access_token)
-        localStorage.setItem('user', JSON.stringify(data.user))
-
-        const userRole = data.user.role || selectedUserType
-        switch (userRole) {
-          case 'patient':
-            router.push('/patient/dashboard')
-            break
-          case 'doctor':
-            router.push('/doctor/dashboard')
-            break
-          case 'staff':
-            router.push('/staff/dashboard')
-            break
-          case 'admin':
-            router.push('/admin/dashboard')
-            break
+        const data = await response.json();
+        localStorage.setItem("token", data.access_token);
+        // After receiving the response from backend
+        localStorage.setItem('user', JSON.stringify(data.user));
+        // Redirect based on user type
+        switch (data.user.Role) {
+          case "Patient":
+            router.push("/patient/dashboard");
+            break;
+          case "Doctor":
+            router.push("/doctor/dashboard");
+            break;
+          case "Staff":
+            router.push("/staff/dashboard");
+            break;
+          case "Admin":
+            router.push("/admin/dashboard");
+            break;
           default:
-            router.push('/')
+            router.push("/");
         }
-        return
+        return;
       }
 
-      // If backend returned non-ok, fall through to demo fallback below
-      console.warn('Backend login failed or returned non-OK. Using demo fallback.')
+      // Handle backend error
+      const err = await response.json();
+      setErrors({ identifier: err.detail || "Login failed" });
     } catch (error) {
-      console.warn('Backend unreachable — using demo login fallback.', error)
-    }
-
-    // Demo fallback: accept any identifier/email and create a demo session
-    try {
-      const demoUser = {
-        email: formData.identifier,
-        role: selectedUserType,
-        name: (formData.identifier || selectedUserType).split('@')[0]
-      }
-      const demoToken = `demo-token-${selectedUserType}-${Date.now()}`
-      localStorage.setItem('token', demoToken)
-      localStorage.setItem('user', JSON.stringify(demoUser))
-
-      // Redirect to selected portal dashboard
-      switch (selectedUserType) {
-        case 'patient':
-          router.push('/patient/dashboard')
-          break
-        case 'doctor':
-          router.push('/doctor/dashboard')
-          break
-        case 'staff':
-          router.push('/staff/dashboard')
-          break
-        case 'admin':
-          router.push('/admin/dashboard')
-          break
-        default:
-          router.push('/')
-      }
+      setErrors({ identifier: "Network error" });
     } finally {
-      setIsLoading(false)
+      setIsLoading(false);
     }
   }
 

@@ -17,6 +17,7 @@ import {
   UserCheck,
   Bell,
 } from "lucide-react";
+import RealtimeNotifications from "@/components/RealtimeNotifications";
 
 const navigationItems = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, href: "/staff/dashboard" },
@@ -25,6 +26,7 @@ const navigationItems = [
   { id: "allocation", label: "Queue Allocation", icon: ListChecks, href: "/staff/allocation" },
   { id: "checkin", label: "QR Check-in", icon: QrCode, href: "/staff/checkin" },
   { id: "live-queue", label: "Live Queue", icon: UserCheck, href: "/staff/live-queue" },
+  { id: "patient-accounts", label: "Patient Accounts", icon: Users, href: "/staff/patient-accounts" },
   { id: "sms", label: "SMS Center", icon: MessageSquareText, href: "/staff/sms" },
 ];
 
@@ -41,11 +43,12 @@ export default function StaffLayout({ children }: { children: React.ReactNode })
       return;
     }
     const user = JSON.parse(userStr);
-    if (user.role !== "staff") {
+    const role = String(user?.Role || user?.role || "").toLowerCase();
+    if (role !== "staff") {
       router.push("/");
       return;
     }
-    setStaffName(user.full_name || user.username || user.email || "Staff");
+    setStaffName(user.Name || user.full_name || user.username || user.Email || user.email || "Staff");
   }, [router]);
 
   const handleLogout = () => {
@@ -136,6 +139,7 @@ export default function StaffLayout({ children }: { children: React.ReactNode })
         </header>
         <main className="flex-1 overflow-auto">{children}</main>
       </div>
+      <RealtimeNotifications />
       {sidebarOpen && (
         <div
           className="fixed inset-0 z-40 bg-slate-950/50 lg:hidden"

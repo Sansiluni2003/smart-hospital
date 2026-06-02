@@ -1,19 +1,21 @@
 from pydantic import BaseModel
 from typing import Optional
-from datetime import date
+from datetime import datetime
 
 class MedicalRecordBase(BaseModel):
+    Appointment_ID: int
     Patient_ID: int
     Doctor_ID: int
-    Clinic_ID: int
-    RecordDate: date
-    Notes: Optional[str] = None
+    ConsultationNotes: Optional[str] = None
+    Prescription: Optional[str] = None
+    RecordDate: Optional[datetime] = None
 
 class MedicalRecordCreate(MedicalRecordBase):
     pass
 
 class MedicalRecordUpdate(BaseModel):
-    Notes: Optional[str] = None
+    ConsultationNotes: Optional[str] = None
+    Prescription: Optional[str] = None
 
 class MedicalRecordResponse(MedicalRecordBase):
     Record_ID: int

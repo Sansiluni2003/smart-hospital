@@ -8,6 +8,7 @@ class PatientBase(BaseModel):
     Phone_No: str
     DateOfBirth: Optional[date] = None
     OPD_Id: str
+    is_active: Optional[bool] = False
 
 class PatientCreate(PatientBase):
     Email: EmailStr
@@ -18,6 +19,7 @@ class PatientUpdate(BaseModel):
     Address: Optional[str] = None
     Phone_No: Optional[str] = None
     DateOfBirth: Optional[date] = None
+    is_active: Optional[bool] = None
 
 class PatientResponse(PatientBase):
     Patient_ID: int

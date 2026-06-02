@@ -15,6 +15,7 @@ import {
   Activity,
   Bell
 } from "lucide-react"
+import RealtimeNotifications from "@/components/RealtimeNotifications"
 
 const navigationItems = [
   { id: 'dashboard', label: 'Dashboard', icon: Home, href: '/doctor/dashboard' },
@@ -34,11 +35,12 @@ export default function DoctorLayout({ children }: { children: React.ReactNode }
     const userStr = localStorage.getItem('user')
     if (userStr) {
       const user = JSON.parse(userStr)
-      if (user.role !== 'doctor') {
+      const role = String(user?.Role || user?.role || '').toLowerCase()
+      if (role !== 'doctor') {
         router.push('/')
         return
       }
-      setDoctorName(user.full_name || user.username || "Doctor")
+      setDoctorName(user.Name || user.full_name || user.username || user.Email || user.email || "Doctor")
     } else {
       router.push('/login')
     }
@@ -149,6 +151,7 @@ export default function DoctorLayout({ children }: { children: React.ReactNode }
         <main className="flex-1 overflow-auto">
           {children}
         </main>
+        <RealtimeNotifications />
       </div>
 
       {/* Sidebar Overlay for Mobile */}

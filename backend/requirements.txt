@@ -1,5 +1,17 @@
-# Add your backend dependencies here
+# Backend dependencies
 fastapi
-uvicorn
+uvicorn[standard]
 sqlalchemy
-pydantic
+pydantic[email]
+python-multipart
+pymysql
+python-jose[cryptography]
+passlib
+bcrypt==4.0.1
+qrcode[pil]
+pillow
+websockets
+vonage
+sendgrid
+certifi
+email-validator

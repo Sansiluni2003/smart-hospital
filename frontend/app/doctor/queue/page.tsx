@@ -4,24 +4,29 @@ import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { authFetch } from "@/lib/authFetch"
 import { 
   Users, Clock, CheckCircle, User, 
-  AlertCircle, Play, RefreshCw, XCircle
+  AlertCircle, FileText, Play, RefreshCw, XCircle
 } from "lucide-react"
 
 interface QueueItem {
   queue_id: number
   appointment_id: number
+  patient_id: number
   queue_number: number
   status: 'waiting' | 'in-consultation' | 'completed' | 'skipped'
   patient_name: string
   arrived_at: string
-  // Dynamic extra fields
-  age?: number
-  gender?: string
+  notes?: string | null
   chiefComplaint?: string
   contact?: string
   email?: string
+  phone?: string | null
+  address?: string | null
+  opd_id?: string | null
+  date_of_birth?: string | null
+  appointment_time?: string | null
 }
 
 export default function DoctorQueuePage() {
@@ -30,18 +35,19 @@ export default function DoctorQueuePage() {
   const [currentPatient, setCurrentPatient] = useState<QueueItem | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
-  const [lastUpdated, setLastUpdated] = useState(new Date())
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [doctorName, setDoctorName] = useState("")
 
   useEffect(() => {
     const userStr = localStorage.getItem('user')
     if (userStr) {
       const user = JSON.parse(userStr)
-      if (user.role !== 'doctor') {
+      const role = String(user?.Role || user?.role || '').toLowerCase()
+      if (role !== 'doctor') {
         router.push('/')
         return
       }
-      setDoctorName(user.full_name || "Doctor")
+      setDoctorName(user.Name || user.full_name || user.username || user.Email || user.email || "Doctor")
     } else {
       router.push('/login')
       return
@@ -62,17 +68,8 @@ export default function DoctorQueuePage() {
     else setRefreshing(true)
 
     try {
-      const token = localStorage.getItem('token')
-      const userStr = localStorage.getItem('user')
-      if (!userStr) return
-      
-      const user = JSON.parse(userStr)
-      const doctorId = user.doctor_id || 1
-
-      // Fetch live queue
-      const response = await fetch(`http://localhost:5000/api/queue/live/${doctorId}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
+      const response = await authFetch(`${apiUrl}/api/v1/doctors/doctor/me/queue`)
 
       if (response.status === 401 || response.status === 422) {
         localStorage.removeItem('token')
@@ -83,33 +80,12 @@ export default function DoctorQueuePage() {
 
       if (response.ok) {
         const data = await response.json()
-        
-        // Let's add some stable randomized details for visualization purposes
-        const processed = data.map((item: QueueItem) => {
-          // Generate a consistent pseudo-random seed based on queue_id
-          const seed = item.queue_id || 1
-          const age = 20 + (seed % 50)
-          const genders = ["Male", "Female"]
-          const gender = genders[seed % 2]
-          const complaints = [
-            "Frequent headaches and blurry vision",
-            "Eye redness, itching, and discharge",
-            "Regular follow-up after lens replacement surgery",
-            "Double vision and difficulties reading signs",
-            "Sudden loss of peripheral vision in left eye",
-            "Routine annual comprehensive eye assessment"
-          ]
-          const complaint = complaints[seed % complaints.length]
-          
-          return {
-            ...item,
-            age,
-            gender,
-            chiefComplaint: complaint,
-            contact: `+94 77 ${1000000 + (seed * 12345) % 9000000}`,
-            email: `${item.patient_name.toLowerCase().replace(/\s+/g, '')}@email.com`
-          }
-        })
+        const processed = data.map((item: QueueItem) => ({
+          ...item,
+          chiefComplaint: item.notes || 'No consultation notes yet',
+          contact: item.phone || item.contact || 'Not provided',
+          email: item.email || 'Not provided',
+        }))
 
         setQueueItems(processed)
         
@@ -128,17 +104,25 @@ export default function DoctorQueuePage() {
 
   const handleUpdateStatus = async (queueId: number, newStatus: 'in-consultation' | 'completed' | 'skipped') => {
     try {
-      const token = localStorage.getItem('token')
-      const response = await fetch(`http://localhost:5000/api/queue/${queueId}/status`, {
-        method: 'PUT',
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
+      const endpoint = newStatus === 'in-consultation'
+        ? `${apiUrl}/api/v1/doctors/doctor/me/appointments/${queueId}/start`
+        : newStatus === 'completed'
+          ? `${apiUrl}/api/v1/doctors/doctor/me/appointments/${queueId}/complete`
+          : `${apiUrl}/api/v1/doctors/doctor/me/appointments/${queueId}/skip`
+      const response = await authFetch(endpoint, {
+        method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ status: newStatus })
+        body: JSON.stringify({})
       })
 
       if (response.ok) {
+        if (newStatus === 'in-consultation') {
+          router.push('/doctor/consultation')
+          return
+        }
         fetchQueueData(true)
       } else {
         const err = await response.json()
@@ -159,7 +143,7 @@ export default function DoctorQueuePage() {
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Patient Queue Management</h1>
             <p className="text-sm text-gray-600 mt-1">
-              Welcome back, Dr. {doctorName} • Last updated: {lastUpdated.toLocaleTimeString()}
+              Welcome back, Dr. {doctorName} • Last updated: {lastUpdated ? lastUpdated.toLocaleTimeString() : '—'}
             </p>
           </div>
           <Button 
@@ -256,19 +240,31 @@ export default function DoctorQueuePage() {
                         </div>
                         <div className="flex-1">
                           <h3 className="text-2xl font-bold text-gray-900">{currentPatient.patient_name}</h3>
-                          <p className="text-gray-600">{currentPatient.age} years • {currentPatient.gender}</p>
+                          <p className="text-gray-600">Appointment #{currentPatient.appointment_id} • Queue #{currentPatient.queue_number}</p>
                           <p className="text-xs text-gray-500 mt-1">Queue Entry ID: Q-{currentPatient.queue_id}</p>
                         </div>
                       </div>
 
                       <div className="grid grid-cols-2 gap-4">
                         <div className="bg-gray-50 p-3 rounded-lg border">
+                          <p className="text-xs text-gray-500 font-semibold">Patient ID</p>
+                          <p className="text-sm font-semibold text-gray-900 mt-0.5">#{currentPatient.patient_id}</p>
+                        </div>
+                        <div className="bg-gray-50 p-3 rounded-lg border">
                           <p className="text-xs text-gray-500 font-semibold">Contact Number</p>
                           <p className="text-sm font-semibold text-gray-900 mt-0.5">{currentPatient.contact}</p>
                         </div>
                         <div className="bg-gray-50 p-3 rounded-lg border">
+                          <p className="text-xs text-gray-500 font-semibold">Appointment Time</p>
+                          <p className="text-sm font-semibold text-gray-900 mt-0.5 truncate">{currentPatient.appointment_time || 'Pending'}</p>
+                        </div>
+                        <div className="bg-gray-50 p-3 rounded-lg border col-span-2">
                           <p className="text-xs text-gray-500 font-semibold">Email Address</p>
                           <p className="text-sm font-semibold text-gray-900 mt-0.5 truncate">{currentPatient.email}</p>
+                        </div>
+                        <div className="bg-gray-50 p-3 rounded-lg border col-span-2">
+                          <p className="text-xs text-gray-500 font-semibold">Address</p>
+                          <p className="text-sm font-semibold text-gray-900 mt-0.5">{currentPatient.address || 'Not provided'}</p>
                         </div>
                       </div>
 
@@ -283,6 +279,14 @@ export default function DoctorQueuePage() {
                       </div>
 
                       <div className="flex flex-col sm:flex-row gap-3 pt-2">
+                        <Button
+                          variant="outline"
+                          className="flex-1 border-blue-200 text-blue-700 hover:bg-blue-50 py-5"
+                          onClick={() => router.push('/doctor/consultation')}
+                        >
+                          <FileText className="h-5 w-5 mr-2" />
+                          Open Consultation
+                        </Button>
                         <Button 
                           className="flex-1 text-white font-medium py-5"
                           style={{ backgroundColor: '#02006c' }}
@@ -350,7 +354,7 @@ export default function DoctorQueuePage() {
                               <div>
                                 <h4 className="font-semibold text-gray-900">{patient.patient_name}</h4>
                                 <p className="text-sm text-gray-500">
-                                  {patient.age} years • {patient.gender} • Arrived: {new Date(patient.arrived_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                  Queue #{patient.queue_number} • Arrived: {new Date(patient.arrived_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                 </p>
                                 <p className="text-xs text-gray-650 mt-1 italic line-clamp-1">
                                   Complaint: {patient.chiefComplaint}
@@ -364,7 +368,7 @@ export default function DoctorQueuePage() {
                               onClick={() => handleUpdateStatus(patient.queue_id, 'in-consultation')}
                               disabled={!!currentPatient}
                             >
-                              Start Call
+                              Start Consultation
                             </Button>
                           </div>
                         ))}

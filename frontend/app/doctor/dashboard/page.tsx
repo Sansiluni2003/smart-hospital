@@ -14,6 +14,7 @@ import {
 } from "lucide-react"
 import Link from "next/link"
 import { useState, useEffect } from "react"
+import { authFetch } from "@/lib/authFetch"
 
 export default function DoctorDashboard() {
   const [stats, setStats] = useState({
@@ -31,33 +32,29 @@ export default function DoctorDashboard() {
 
   const fetchDashboardData = async () => {
     try {
-      const token = localStorage.getItem('token')
       const userStr = localStorage.getItem('user')
       if (!userStr) return
       
       const user = JSON.parse(userStr)
-      setDoctorName(user.full_name)
-      
-      const doctorId = user.doctor_id || 1 // Fallback for MVP
-      
-      const response = await fetch(`http://localhost:5000/api/queue/live/${doctorId}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
+      const response = await authFetch(`${apiUrl}/api/v1/doctors/doctor/me/dashboard`)
       if (!response.ok) throw new Error('Failed to fetch')
       
       const data = await response.json()
+      setDoctorName(data?.doctor?.Name || user.Name || user.full_name || user.Email || "Doctor")
       
-      setStats(prev => ({
-        ...prev,
-        inQueue: data.length,
-        todayPatients: data.length
-      }))
+      setStats(data.stats || {
+        todayPatients: 0,
+        inQueue: 0,
+        completed: 0,
+        pending: 0,
+      })
       
-      const mappedQueue = data.map((entry: {queue_id: number; patient_name: string; status: string; queue_number: number}) => ({
-        id: entry.queue_id,
-        time: "Now", // Should calculate based on queue
+      const mappedQueue = (data.queue || []).map((entry: {appointment_id: number; patient_name: string; status: string; queue_number: number; appointment_time?: string | null; notes?: string | null}) => ({
+        id: entry.appointment_id,
+        time: entry.appointment_time || "Pending",
         patient: entry.patient_name,
-        type: "Consultation",
+        type: entry.notes || "Consultation",
         status: entry.status,
         queue_number: entry.queue_number
       }))
@@ -71,14 +68,16 @@ export default function DoctorDashboard() {
 
   const updateQueueStatus = async (queueId: number, newStatus: string) => {
     try {
-      const token = localStorage.getItem('token')
-      const response = await fetch(`http://localhost:5000/api/queue/${queueId}/status`, {
-        method: 'PUT',
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
+      const endpoint = newStatus === 'in-consultation'
+        ? `${apiUrl}/api/v1/doctors/doctor/me/appointments/${queueId}/start`
+        : `${apiUrl}/api/v1/doctors/doctor/me/appointments/${queueId}/complete`
+      const response = await authFetch(endpoint, {
+        method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ status: newStatus })
+        body: JSON.stringify({})
       })
       if (response.ok) {
         fetchDashboardData() // Refresh queue
@@ -187,7 +186,8 @@ export default function DoctorDashboard() {
                         #{upcomingAppointments.indexOf(appointment) + 1}
                       </div>
                       <div>
-                        <p className="text-sm text-gray-600">No patients in queue • Type: {appointment.type}</p>
+                        <p className="text-sm font-semibold text-gray-900">{appointment.patient}</p>
+                        <p className="text-sm text-gray-600">{appointment.time} • {appointment.type}</p>
                       </div>
                     </div>
                     <div className="flex flex-col items-end space-y-2">
