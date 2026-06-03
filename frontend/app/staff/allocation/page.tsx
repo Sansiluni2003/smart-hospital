@@ -11,7 +11,9 @@ import {
   Stethoscope,
   Users,
   XCircle,
+  Building2,
 } from "lucide-react"
+
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { authFetch } from "@/lib/authFetch"
@@ -47,17 +49,6 @@ type DoctorOption = {
   endTime: string
 }
 
-type QueueEntry = {
-  queueNumber: number
-  patientName: string
-  doctorName: string
-  appointmentId: string
-  status: string
-  date?: string | null
-  time?: string | null
-  phone?: string | null
-}
-
 const todayDate = () => new Date().toISOString().slice(0, 10)
 
 function appointmentStatusBadge(status: string) {
@@ -78,14 +69,16 @@ function capacityBar(booked: number, max: number) {
 
 export default function StaffAllocationPage() {
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"
+
   const [appointments, setAppointments] = useState<Appointment[]>([])
   const [patients, setPatients] = useState<Patient[]>([])
   const [availableDoctors, setAvailableDoctors] = useState<DoctorOption[]>([])
-  const [liveQueue, setLiveQueue] = useState<QueueEntry[]>([])
+
   const [selectedAppointmentId, setSelectedAppointmentId] = useState<string>("")
   const [selectedDoctorId, setSelectedDoctorId] = useState<string>("")
   const [selectedDate, setSelectedDate] = useState(todayDate())
-  const [selectedClinicId, setSelectedClinicId] = useState<string>("")
+  const [selectedClinicId, setSelectedClinicId] = useState<string>("1") // Defaulted to 1 to avoid empty state
+
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -93,22 +86,45 @@ export default function StaffAllocationPage() {
   const [errorMsg, setErrorMsg] = useState("")
 
   const patientLookup = useMemo(() => new Map(patients.map((p) => [p.Patient_ID, p])), [patients])
+
+  // Derive pending and allocated appointments
+  const pendingAppointments = useMemo(
+    () => appointments.filter((a) => !a.Doctor_ID || String(a.Status ?? "").toLowerCase().includes("pending")),
+    [appointments]
+  )
+
+  const allocatedAppointments = useMemo(
+    () => appointments.filter((a) => a.Doctor_ID && String(a.Status ?? "").toLowerCase().includes("allocated")),
+    [appointments]
+  )
+
   const selectedAppointment = useMemo(
     () => appointments.find((a) => String(a.Appointment_ID) === selectedAppointmentId) ?? null,
-    [appointments, selectedAppointmentId],
+    [appointments, selectedAppointmentId]
   )
+
   const selectedDoctor = useMemo(
     () => availableDoctors.find((d) => String(d.doctorId) === selectedDoctorId) ?? null,
-    [availableDoctors, selectedDoctorId],
+    [availableDoctors, selectedDoctorId]
   )
 
   const loadAppointments = async () => {
     const res = await authFetch(`${apiUrl}/api/v1/appointments/`)
     if (!res.ok) throw new Error("Failed to load appointments")
     const data: Appointment[] = await res.json()
-    setAppointments(data)
-    const firstPending = data.find((a) => !a.Doctor_ID || String(a.Status ?? "").toLowerCase().includes("pending"))
-    if (firstPending) {
+
+    // Filter appointments: remove ONLY completed and arrived
+    const filteredAppointments = data.filter((a) => {
+      const status = String(a.Status ?? "").toLowerCase()
+      const isCompletedOrArrived = status.includes("completed") || status.includes("arrived")
+      return !isCompletedOrArrived
+    })
+
+    setAppointments(filteredAppointments)
+
+    // Auto-select first pending if none selected
+    const firstPending = filteredAppointments.find((a) => !a.Doctor_ID || String(a.Status ?? "").toLowerCase().includes("pending"))
+    if (firstPending && !selectedAppointmentId) {
       setSelectedAppointmentId(String(firstPending.Appointment_ID))
       setSelectedClinicId(String(firstPending.ClinicID))
       setSelectedDate(firstPending.AppointmentDate)
@@ -128,17 +144,16 @@ export default function StaffAllocationPage() {
     )
     if (!res.ok) throw new Error("Failed to load available doctors")
     const data: DoctorOption[] = await res.json()
-    setAvailableDoctors(data)
-    setSelectedDoctorId((cur) =>
-      data.some((d) => String(d.doctorId) === cur) ? cur : String(data[0]?.doctorId ?? ""),
-    )
-  }
 
-  const loadLiveQueue = async (clinicId: string) => {
-    if (!clinicId) { setLiveQueue([]); return }
-    const res = await authFetch(`${apiUrl}/api/v1/staff/clinic-staff/live-queue/${clinicId}`)
-    if (!res.ok) throw new Error("Failed to load live queue")
-    setLiveQueue(await res.json())
+    // Filter out doctors who are already fully booked
+    const actuallyAvailableDoctors = data.filter((d) => d.bookedPatients < d.maxPatients)
+
+    setAvailableDoctors(actuallyAvailableDoctors)
+    setSelectedDoctorId((cur) =>
+      actuallyAvailableDoctors.some((d) => String(d.doctorId) === cur)
+        ? cur
+        : String(actuallyAvailableDoctors[0]?.doctorId ?? ""),
+    )
   }
 
   const refreshAll = async (silent = false) => {
@@ -168,7 +183,6 @@ export default function StaffAllocationPage() {
   useEffect(() => {
     if (!selectedClinicId || !selectedDate) return
     void loadAvailableDoctors(selectedClinicId, selectedDate).catch(console.error)
-    void loadLiveQueue(selectedClinicId).catch(console.error)
   }, [selectedClinicId, selectedDate])
 
   useEffect(() => {
@@ -196,9 +210,13 @@ export default function StaffAllocationPage() {
       setSuccessMsg(
         `Appointment #${selectedAppointment.Appointment_ID} allocated to ${selectedDoctor.doctorName}.`,
       )
+      
+      // Auto-select the next pending appointment after successful allocation
+      const nextPending = pendingAppointments.find(a => String(a.Appointment_ID) !== String(selectedAppointment.Appointment_ID))
+      if (nextPending) setSelectedAppointmentId(String(nextPending.Appointment_ID))
+
       await refreshAll(true)
       await loadAvailableDoctors(selectedClinicId, selectedDate)
-      await loadLiveQueue(selectedClinicId)
     } catch (e) {
       setErrorMsg(e instanceof Error ? e.message : "Failed to allocate appointment")
     } finally {
@@ -208,308 +226,333 @@ export default function StaffAllocationPage() {
 
   return (
     <div
-      className="relative min-h-screen overflow-hidden"
+      className="h-screen w-full overflow-hidden flex flex-col relative"
       style={{
         fontFamily: '"Space Grotesk", "Sora", sans-serif',
-        background: "radial-gradient(circle at top, #e6f3ff 0%, #f8fafc 35%, #ffffff 100%)",
+        background: "radial-gradient(circle at top left, #f0fdfa 0%, #f8fafc 40%, #ffffff 100%)",
       }}
     >
       <style jsx global>{`
         @import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Sora:wght@400;600&display=swap");
       `}</style>
-
-      <div className="pointer-events-none absolute inset-0">
-        <div className="absolute -top-32 -right-20 h-72 w-72 rounded-full bg-emerald-200/40 blur-3xl animate-pulse" />
-        <div className="absolute bottom-0 left-[-120px] h-80 w-80 rounded-full bg-sky-200/50 blur-3xl" />
-        <div className="absolute top-40 left-1/2 h-64 w-64 -translate-x-1/2 rounded-full bg-amber-100/60 blur-3xl" />
+      
+      {/* Decorative Background Blobs */}
+      <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
+        <div className="absolute -top-32 -right-20 h-96 w-96 rounded-full bg-emerald-100/50 blur-3xl animate-pulse" />
+        <div className="absolute bottom-[-10%] left-[-5%] h-80 w-80 rounded-full bg-sky-100/50 blur-3xl" />
       </div>
 
+      {/* Notifications */}
       {(successMsg || errorMsg) && (
-        <div className="fixed top-6 right-6 z-50 space-y-2">
+        <div className="fixed top-4 right-1/2 translate-x-1/2 z-50 space-y-2 w-[90%] max-w-md">
           {successMsg && (
-            <div className="flex items-center gap-3 rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm text-emerald-800 shadow-xl">
+            <div className="flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50/95 backdrop-blur-sm px-4 py-3 text-sm text-emerald-800 shadow-xl animate-in slide-in-from-top-4">
               <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
-              {successMsg}
-              <button className="ml-auto text-emerald-600 hover:text-emerald-800" onClick={() => setSuccessMsg("")}>x</button>
+              <span className="flex-1 font-medium">{successMsg}</span>
+              <button className="text-emerald-600 hover:text-emerald-800" onClick={() => setSuccessMsg("")}><XCircle className="h-4 w-4"/></button>
             </div>
           )}
           {errorMsg && (
-            <div className="flex items-center gap-3 rounded-2xl border border-red-200 bg-white px-4 py-3 text-sm text-red-700 shadow-xl">
+            <div className="flex items-center gap-3 rounded-xl border border-red-200 bg-red-50/95 backdrop-blur-sm px-4 py-3 text-sm text-red-800 shadow-xl animate-in slide-in-from-top-4">
               <XCircle className="h-4 w-4 shrink-0 text-red-600" />
-              {errorMsg}
-              <button className="ml-auto text-red-600 hover:text-red-800" onClick={() => setErrorMsg("")}>x</button>
+              <span className="flex-1 font-medium">{errorMsg}</span>
+              <button className="text-red-600 hover:text-red-800" onClick={() => setErrorMsg("")}><XCircle className="h-4 w-4"/></button>
             </div>
           )}
         </div>
       )}
 
-      <div className="relative mx-auto max-w-6xl space-y-6 p-6 lg:p-10">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="space-y-2">
-            <div className="inline-flex items-center gap-2 rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
-              <Sparkles className="h-4 w-4" />
-              Smart Allocation
+      {/* Top Navigation / Header */}
+      <header className="relative z-10 shrink-0 bg-white/70 backdrop-blur-md border-b border-slate-200 px-6 py-4 shadow-sm">
+        <div className="max-w-[1400px] mx-auto flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100/80 px-2.5 py-0.5 text-xs font-semibold text-emerald-800 mb-1">
+              <Sparkles className="h-3 w-3" /> Staff Portal
             </div>
-            <h1 className="text-2xl font-semibold text-slate-900 md:text-3xl">Queue Allocation Center</h1>
-            <p className="text-sm text-slate-600">
-              Match patients to the right doctor and keep the live queue moving.
-            </p>
+            <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Queue Allocation Center</h1>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void refreshAll(true)}
-            disabled={refreshing}
-            className="border-slate-300 bg-white/80"
-          >
-            <RefreshCw className={`mr-2 h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
-            Refresh data
-          </Button>
+
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Unified Filter Toolbar */}
+            <div className="flex items-center gap-0 rounded-lg border border-slate-300 bg-white shadow-sm overflow-hidden h-10">
+              <div className="flex items-center px-3 bg-slate-50 border-r border-slate-200 h-full">
+                <Building2 className="w-4 h-4 text-slate-400 mr-2" />
+                <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider mr-2">Clinic</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={selectedClinicId}
+                  onChange={(e) => setSelectedClinicId(e.target.value)}
+                  className="w-12 bg-transparent border-none text-sm font-medium text-slate-900 focus:outline-none focus:ring-0 p-0"
+                />
+              </div>
+              <div className="flex items-center px-3 bg-white h-full">
+                <CalendarDays className="w-4 h-4 text-slate-400 mr-2" />
+                <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider mr-2">Date</span>
+                <input
+                  type="date"
+                  value={selectedDate}
+                  onChange={(e) => setSelectedDate(e.target.value)}
+                  className="bg-transparent border-none text-sm font-medium text-slate-900 focus:outline-none focus:ring-0 p-0"
+                />
+              </div>
+            </div>
+
+            <Button
+              variant="default"
+              onClick={() => void refreshAll(true)}
+              disabled={refreshing}
+              className="bg-slate-900 hover:bg-slate-800 text-white h-10 px-4 shadow-sm transition-all"
+            >
+              <RefreshCw className={`mr-2 h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+              Refresh
+            </Button>
+          </div>
         </div>
+      </header>
 
-        <div className="grid gap-4 md:grid-cols-3">
-          <Card className="border-slate-200 shadow-sm bg-white/90">
-            <CardContent className="flex items-center gap-4 p-5">
-              <div className="rounded-2xl bg-emerald-50 p-3 text-emerald-700"><Users className="h-6 w-6" /></div>
-              <div>
-                <p className="text-xs uppercase tracking-wide text-slate-400">Appointments</p>
-                <p className="text-2xl font-semibold text-slate-900">{appointments.length}</p>
-              </div>
-            </CardContent>
-          </Card>
-          <Card className="border-slate-200 shadow-sm bg-white/90">
-            <CardContent className="flex items-center gap-4 p-5">
-              <div className="rounded-2xl bg-sky-50 p-3 text-sky-700"><Stethoscope className="h-6 w-6" /></div>
-              <div>
-                <p className="text-xs uppercase tracking-wide text-slate-400">Available doctors</p>
-                <p className="text-2xl font-semibold text-slate-900">{availableDoctors.length}</p>
-              </div>
-            </CardContent>
-          </Card>
-          <Card className="border-slate-200 shadow-sm bg-white/90">
-            <CardContent className="flex items-center gap-4 p-5">
-              <div className="rounded-2xl bg-amber-50 p-3 text-amber-700"><Clock3 className="h-6 w-6" /></div>
-              <div>
-                <p className="text-xs uppercase tracking-wide text-slate-400">Live queue</p>
-                <p className="text-2xl font-semibold text-slate-900">{liveQueue.length}</p>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        <Card className="border-slate-200 shadow-sm bg-white/90">
-          <CardContent className="grid gap-4 p-5 md:grid-cols-3">
-            <div className="space-y-1.5">
-              <p className="text-xs uppercase tracking-wide text-slate-400">Clinic</p>
-              <input
-                type="number"
-                min={1}
-                value={selectedClinicId}
-                onChange={(e) => setSelectedClinicId(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <p className="text-xs uppercase tracking-wide text-slate-400">Appointment date</p>
-              <input
-                type="date"
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <p className="text-xs uppercase tracking-wide text-slate-400">Selected appointment</p>
-              <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-600">
-                {selectedAppointment
-                  ? `#${selectedAppointment.Appointment_ID} - Patient ${selectedAppointment.Patient_ID}`
-                  : "Pick an appointment from the list"}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <div className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
-          <Card className="border-slate-200 shadow-sm bg-white/95">
-            <CardHeader>
-              <CardTitle className="text-base flex items-center justify-between">
-                Booked Appointments
-                <span className="text-xs font-normal text-slate-500 bg-slate-100 rounded-full px-2 py-0.5">
-                  {appointments.length}
+      {/* Main Content Area */}
+      <main className="relative z-10 flex-1 min-h-0 overflow-hidden p-4 md:p-6">
+        <div className="max-w-[1400px] mx-auto h-full grid lg:grid-cols-12 gap-6">
+          
+          {/* LEFT COLUMN: Pending Appointments */}
+          <Card className="lg:col-span-6 xl:col-span-5 flex flex-col h-full overflow-hidden border-slate-200 shadow-md bg-white/95 backdrop-blur-sm">
+            <CardHeader className="shrink-0 border-b border-slate-100 bg-white py-4 px-5">
+              <CardTitle className="text-lg flex items-center justify-between font-semibold">
+                <div className="flex items-center gap-2">
+                  <Users className="h-5 w-5 text-emerald-600" />
+                  Pending Allocation
+                </div>
+                <span className="bg-emerald-100 text-emerald-800 text-xs font-bold px-2.5 py-1 rounded-full">
+                  {pendingAppointments.length}
                 </span>
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-2 max-h-[34rem] overflow-auto pr-1">
+            <CardContent className="flex-1 overflow-y-auto p-3 bg-slate-50/50">
               {loading ? (
-                <p className="py-6 text-center text-sm text-slate-500">Loading appointments...</p>
-              ) : appointments.length === 0 ? (
-                <p className="py-6 text-center text-sm text-slate-500">No appointments found.</p>
+                <div className="h-full flex items-center justify-center text-sm text-slate-500">Loading appointments...</div>
+              ) : pendingAppointments.length === 0 ? (
+                <div className="h-full flex flex-col items-center justify-center text-slate-400 space-y-3">
+                  <div className="p-4 rounded-full bg-slate-100"><CheckCircle2 className="w-8 h-8 text-slate-300" /></div>
+                  <p className="text-sm font-medium text-slate-500">No pending appointments right now.</p>
+                </div>
               ) : (
-                appointments.map((apt) => {
-                  const patient = patientLookup.get(apt.Patient_ID)
-                  const isSelected = selectedAppointmentId === String(apt.Appointment_ID)
-                  const badgeCls = appointmentStatusBadge(apt.Status ?? "")
-                  return (
-                    <button
-                      key={apt.Appointment_ID}
-                      onClick={() => setSelectedAppointmentId(String(apt.Appointment_ID))}
-                      className={`w-full rounded-xl border p-4 text-left transition-all ${
-                        isSelected
-                          ? "border-emerald-400 bg-emerald-50 ring-1 ring-emerald-300"
-                          : "border-slate-200 bg-white hover:border-emerald-300 hover:bg-emerald-50/40"
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-semibold text-slate-900">
-                            {patient?.Name ?? `Patient #${apt.Patient_ID}`}
-                          </p>
-                          <p className="text-xs text-slate-500">
-                            #{apt.Appointment_ID} - Clinic {apt.ClinicID}
-                            {apt.Doctor_ID ? ` - Dr #${apt.Doctor_ID}` : " - Unallocated"}
-                          </p>
-                          <p className="text-xs text-slate-500">
-                            <CalendarDays className="inline h-3 w-3 mr-0.5 align-middle" />
-                            {apt.AppointmentDate}{" "}
-                            {apt.AppointmentTime ? (
-                              <><Clock3 className="inline h-3 w-3 mr-0.5 align-middle" />{apt.AppointmentTime}</>
-                            ) : (
-                              " - time pending"
-                            )}
-                          </p>
+                <div className="space-y-2">
+                  {pendingAppointments.map((apt) => {
+                    const patient = patientLookup.get(apt.Patient_ID)
+                    const isSelected = selectedAppointmentId === String(apt.Appointment_ID)
+                    const badgeCls = appointmentStatusBadge(apt.Status ?? "")
+                    return (
+                      <button
+                        key={apt.Appointment_ID}
+                        onClick={() => setSelectedAppointmentId(String(apt.Appointment_ID))}
+                        className={`w-full group rounded-xl border p-4 text-left transition-all duration-200 ${
+                          isSelected
+                            ? "border-emerald-500 bg-emerald-50 shadow-sm ring-1 ring-emerald-500/20"
+                            : "border-slate-200 bg-white hover:border-emerald-300 hover:shadow-sm"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center justify-between mb-1">
+                              <p className="truncate font-semibold text-slate-900">
+                                {patient?.Name ?? `Patient #${apt.Patient_ID}`}
+                              </p>
+                              <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wider font-bold ${badgeCls}`}>
+                                {apt.Status}
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-medium text-slate-500">
+                              <span className="flex items-center text-slate-700 bg-slate-100 rounded px-1.5 py-0.5">
+                                ID: #{apt.Appointment_ID}
+                              </span>
+                              <span className="flex items-center">
+                                <Building2 className="inline h-3 w-3 mr-1" /> Clinic {apt.ClinicID}
+                              </span>
+                              <span className="flex items-center">
+                                <Clock3 className="inline h-3 w-3 mr-1 text-emerald-600" /> 
+                                {apt.AppointmentTime ?? "Time TBA"}
+                              </span>
+                            </div>
+                          </div>
                         </div>
-                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${badgeCls}`}>
-                          {apt.Status}
-                        </span>
-                      </div>
-                      {apt.Notes && (
-                        <p className="mt-2 truncate text-xs text-slate-500">Note: {apt.Notes}</p>
-                      )}
-                    </button>
-                  )
-                })
+                        {apt.Notes && (
+                          <div className="mt-3 p-2 bg-yellow-50 rounded border border-yellow-100 text-xs text-yellow-800 line-clamp-2">
+                            <span className="font-semibold">Note:</span> {apt.Notes}
+                          </div>
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
               )}
             </CardContent>
           </Card>
 
-          <div className="space-y-6">
-            <Card className="border-slate-200 shadow-sm bg-white/95">
-              <CardHeader>
-                <CardTitle className="text-base">Doctor selection</CardTitle>
+          {/* RIGHT COLUMN: Actions & Allocated */}
+          <div className="lg:col-span-6 xl:col-span-7 flex flex-col gap-6 h-full min-h-0">
+            
+            {/* TOP HALF: Doctor Allocation Box */}
+            <Card className="flex flex-col shrink-0 border-emerald-200 shadow-md bg-white/95 backdrop-blur-sm max-h-[60%]">
+              <CardHeader className="shrink-0 border-b border-emerald-100 bg-emerald-50/50 py-4 px-5">
+                <CardTitle className="text-lg flex items-center justify-between font-semibold">
+                  <div className="flex items-center gap-2">
+                    <Stethoscope className="h-5 w-5 text-emerald-600" />
+                    Allocate Doctor
+                  </div>
+                  <span className="bg-white border border-emerald-200 text-emerald-800 text-xs font-bold px-2.5 py-1 rounded-full shadow-sm">
+                    {availableDoctors.length} Available
+                  </span>
+                </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-5">
+              
+              <CardContent className="flex flex-col flex-1 overflow-hidden p-5 gap-5 min-h-0">
+                {/* Selected Patient Banner */}
                 {selectedAppointment ? (
-                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm">
-                    <p className="font-semibold text-emerald-900">
-                      Appointment #{selectedAppointment.Appointment_ID}
-                    </p>
-                    <p className="text-slate-600">
-                      {patientLookup.get(selectedAppointment.Patient_ID)?.Name ??
-                        `Patient #${selectedAppointment.Patient_ID}`}
-                    </p>
-                    <p className="text-slate-500">
-                      {selectedAppointment.AppointmentDate}{" "}
-                      {selectedAppointment.AppointmentTime ?? " - time pending"}
-                    </p>
+                  <div className="shrink-0 flex items-center justify-between rounded-xl border border-emerald-200 bg-gradient-to-r from-emerald-50 to-teal-50 p-4 shadow-sm">
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wider text-emerald-600 mb-1">
+                        Currently Allocating
+                      </p>
+                      <p className="text-base font-bold text-slate-900">
+                        {patientLookup.get(selectedAppointment.Patient_ID)?.Name ?? `Patient #${selectedAppointment.Patient_ID}`}
+                      </p>
+                      <p className="text-xs font-medium text-slate-500 mt-0.5">
+                        Apt #{selectedAppointment.Appointment_ID} • {selectedAppointment.AppointmentDate} {selectedAppointment.AppointmentTime ? `at ${selectedAppointment.AppointmentTime}` : ''}
+                      </p>
+                    </div>
                   </div>
                 ) : (
-                  <p className="text-sm text-slate-500">Select an appointment to continue.</p>
+                  <div className="shrink-0 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center">
+                    <p className="text-sm font-medium text-slate-500">Select a pending appointment on the left to begin.</p>
+                  </div>
                 )}
 
-                <div>
-                  <p className="mb-2 text-sm font-medium text-slate-700">
-                    Available doctors
-                    <span className="text-xs text-slate-400"> ({availableDoctors.length})</span>
-                  </p>
-                  <div className="space-y-2 max-h-[18rem] overflow-auto pr-1">
-                    {availableDoctors.length === 0 ? (
-                      <p className="rounded-lg border border-dashed border-slate-300 py-6 text-center text-sm text-slate-400">
-                        No available doctors found for this date and clinic.
-                      </p>
-                    ) : (
-                      availableDoctors.map((doc) => {
-                        const isDocSelected = String(doc.doctorId) === selectedDoctorId
-                        const { pct, color } = capacityBar(doc.bookedPatients, doc.maxPatients)
-                        const isFull = doc.bookedPatients >= doc.maxPatients
-                        return (
-                          <button
-                            key={doc.scheduleId}
-                            disabled={isFull}
-                            onClick={() => setSelectedDoctorId(String(doc.doctorId))}
-                            className={`w-full rounded-xl border p-4 text-left transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
-                              isDocSelected
-                                ? "border-emerald-400 bg-emerald-50 ring-1 ring-emerald-300"
-                                : "border-slate-200 bg-white hover:border-emerald-300 hover:bg-emerald-50/40"
-                            }`}
-                          >
-                            <div className="flex items-center justify-between gap-3 mb-2">
-                              <div className="min-w-0">
-                                <p className="font-semibold text-slate-900 truncate">{doc.doctorName}</p>
-                                <p className="text-xs text-slate-500">{doc.specialty ?? "Doctor"} - {doc.time}</p>
-                              </div>
-                              <span
-                                className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
-                                  isFull
-                                    ? "bg-red-100 text-red-700"
-                                    : "bg-emerald-100 text-emerald-700"
-                                }`}
-                              >
-                                {doc.bookedPatients}/{doc.maxPatients}
-                              </span>
+                {/* Doctor List */}
+                <div className="flex-1 overflow-y-auto pr-2 space-y-2">
+                  {availableDoctors.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center border border-dashed border-slate-200 rounded-xl py-8">
+                      <Stethoscope className="w-8 h-8 text-slate-300 mb-2" />
+                      <p className="text-sm text-slate-500 font-medium">No available doctors found.</p>
+                      <p className="text-xs text-slate-400 mt-1">Check the clinic and date filters above.</p>
+                    </div>
+                  ) : (
+                    availableDoctors.map((doc) => {
+                      const isDocSelected = String(doc.doctorId) === selectedDoctorId
+                      const { pct, color } = capacityBar(doc.bookedPatients, doc.maxPatients)
+                      const isFull = doc.bookedPatients >= doc.maxPatients
+                      return (
+                        <button
+                          key={doc.scheduleId}
+                          disabled={isFull}
+                          onClick={() => setSelectedDoctorId(String(doc.doctorId))}
+                          className={`w-full group relative overflow-hidden rounded-xl border p-4 text-left transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed ${
+                            isDocSelected
+                              ? "border-slate-800 bg-slate-900 shadow-md ring-2 ring-slate-900/20"
+                              : "border-slate-200 bg-white hover:border-slate-400 hover:shadow-sm"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-3 mb-3 relative z-10">
+                            <div className="min-w-0">
+                              <p className={`font-semibold truncate text-base ${isDocSelected ? 'text-white' : 'text-slate-900'}`}>
+                                {doc.doctorName}
+                              </p>
+                              <p className={`text-xs font-medium ${isDocSelected ? 'text-slate-300' : 'text-slate-500'}`}>
+                                {doc.specialty ?? "General"} • Shift: {doc.time}
+                              </p>
                             </div>
-                            <div className="h-1.5 w-full rounded-full bg-slate-200">
-                              <div
-                                className={`h-1.5 rounded-full ${color}`}
-                                style={{ width: `${pct}%` }}
-                              />
+                            <div className={`shrink-0 flex flex-col items-end`}>
+                               <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${
+                                isFull 
+                                  ? "bg-red-100 text-red-700" 
+                                  : isDocSelected 
+                                    ? "bg-slate-700 text-white" 
+                                    : "bg-emerald-100 text-emerald-800"
+                               }`}>
+                                 {doc.bookedPatients} / {doc.maxPatients}
+                               </span>
                             </div>
-                          </button>
-                        )
-                      })
-                    )}
-                  </div>
+                          </div>
+                          <div className={`h-2 w-full rounded-full relative z-10 overflow-hidden ${isDocSelected ? 'bg-slate-700' : 'bg-slate-100'}`}>
+                            <div
+                              className={`h-full rounded-full transition-all duration-500 ${color}`}
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                        </button>
+                      )
+                    })
+                  )}
                 </div>
 
-                <Button
-                  onClick={() => void allocateAppointment()}
-                  className="w-full bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60"
-                  disabled={!selectedAppointment || !selectedDoctor || saving}
-                >
-                  {saving ? (
-                    <><RefreshCw className="mr-2 h-4 w-4 animate-spin" />Allocating...</>
-                  ) : (
-                    <>
-                      <ListChecks className="mr-2 h-4 w-4" />
-                      Allocate to {selectedDoctor ? selectedDoctor.doctorName : "doctor"}
-                    </>
-                  )}
-                </Button>
+                {/* Submit Action */}
+                <div className="shrink-0 pt-2 border-t border-slate-100 mt-auto">
+                  <Button
+                    size="lg"
+                    onClick={() => void allocateAppointment()}
+                    className="w-full h-14 text-base font-semibold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 shadow-md transition-all"
+                    disabled={!selectedAppointment || !selectedDoctor || saving}
+                  >
+                    {saving ? (
+                      <><RefreshCw className="mr-2 h-5 w-5 animate-spin" /> Confirming Allocation...</>
+                    ) : (
+                      <>
+                        <ListChecks className="mr-2 h-5 w-5" />
+                        Confirm Allocation to {selectedDoctor ? selectedDoctor.doctorName.split(' ')[0] : "Doctor"}
+                      </>
+                    )}
+                  </Button>
+                </div>
               </CardContent>
             </Card>
 
-            <Card className="border-slate-200 shadow-sm bg-white/95">
-              <CardHeader>
-                <CardTitle className="text-base">Live queue snapshot</CardTitle>
+            {/* BOTTOM HALF: Allocated Appointments */}
+            <Card className="flex flex-col flex-1 overflow-hidden border-slate-200 shadow-md bg-white/95 backdrop-blur-sm min-h-0">
+              <CardHeader className="shrink-0 border-b border-slate-100 py-3 px-5 bg-slate-50/50">
+                <CardTitle className="text-sm flex items-center justify-between font-semibold text-slate-700">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="h-4 w-4 text-slate-400" />
+                    Recently Allocated Today
+                  </div>
+                  <span className="bg-slate-200 text-slate-700 text-xs font-bold px-2 py-0.5 rounded-md">
+                    {allocatedAppointments.length}
+                  </span>
+                </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-2">
-                {liveQueue.length === 0 ? (
-                  <p className="text-sm text-slate-500">No live queue entries yet.</p>
+              <CardContent className="flex-1 overflow-y-auto p-0">
+                {allocatedAppointments.length === 0 ? (
+                  <div className="h-full flex items-center justify-center p-6 text-sm text-slate-400 font-medium">
+                    No appointments allocated yet today.
+                  </div>
                 ) : (
-                  liveQueue.slice(0, 4).map((entry) => (
-                    <div key={entry.appointmentId} className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2 text-sm">
-                      <div>
-                        <p className="font-semibold text-slate-800">{entry.patientName}</p>
-                        <p className="text-xs text-slate-500">{entry.doctorName} - {entry.appointmentId}</p>
-                      </div>
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">#{entry.queueNumber}</span>
-                    </div>
-                  ))
+                  <div className="divide-y divide-slate-100">
+                    {allocatedAppointments.map((apt) => {
+                      const patient = patientLookup.get(apt.Patient_ID)
+                      return (
+                        <div key={apt.Appointment_ID} className="flex items-center justify-between px-5 py-3 hover:bg-slate-50 transition-colors">
+                          <div className="min-w-0 pr-4">
+                            <p className="font-semibold text-sm text-slate-800 truncate">
+                              {patient?.Name ?? `Patient #${apt.Patient_ID}`}
+                            </p>
+                            <p className="text-xs font-medium text-slate-500 flex items-center gap-1.5 mt-0.5">
+                              <span className="text-emerald-600 font-bold bg-emerald-50 px-1.5 rounded">Dr. #{apt.Doctor_ID}</span> 
+                              • Apt #{apt.Appointment_ID}
+                            </p>
+                          </div>
+                          <span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-emerald-800">
+                            <CheckCircle2 className="w-3 h-3" /> Allocated
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
                 )}
               </CardContent>
             </Card>
+
           </div>
         </div>
-      </div>
+      </main>
     </div>
   )
 }
