@@ -12,7 +12,10 @@ Event shape sent over the wire:
 """
 from __future__ import annotations
 import asyncio
+import json
+from datetime import datetime
 from sqlalchemy.orm import Session
+from app.models.audit_log import AuditLog
 from app.utils.ws_manager import manager
 
 
@@ -24,6 +27,7 @@ EVT_CHECKIN_VERIFIED     = "checkin_verified"
 EVT_QUEUE_UPDATE         = "queue_update"
 EVT_CONSULTATION_STARTED = "consultation_started"
 EVT_SMS_SENT             = "sms_sent"
+EVT_PATIENT_ACCOUNT_ACTIVATED = "patient_account_activated"
 
 
 def _fire(user_id: int, payload: dict):
@@ -73,6 +77,19 @@ def notify_staff_users(db: Session, event: str, title: str, message: str, data: 
         from app.models.user import User, UserRole
         staff_users = db.query(User).filter(User.Role == UserRole.Staff).all()
         user_ids = [u.UserID for u in staff_users]
+        payload = {"event": event, "title": title, "message": message, "data": data or {}}
+
+        for user in staff_users:
+            db.add(
+                AuditLog(
+                    UserID=user.UserID,
+                    Action="staff_notification",
+                    Details=json.dumps(payload),
+                    Timestamp=datetime.utcnow(),
+                )
+            )
+
+        db.commit()
         _fire_many(user_ids, {"event": event, "title": title, "message": message, "data": data or {}})
     except Exception:
         pass

@@ -14,10 +14,11 @@ from app.services.clinic_staff import (
     get_doctor_availability,
     get_available_doctors,
     activate_patient_account,
-    update_clinic_staff
+    update_clinic_staff,
+    get_staff_notifications
 )
 
-router = APIRouter(prefix="/clinic-staff", tags=["Clinic Staff"])
+router = APIRouter( prefix="/clinic-staff", tags=["Clinic Staff"])
 
 
 class SendSmsRequest(BaseModel):
@@ -119,3 +120,8 @@ def activate_patient_endpoint(patient_id: int, db: Session = Depends(get_db)):
     if not result:
         raise HTTPException(status_code=404, detail="Patient not found")
     return result
+
+@router.get("/notifications/", dependencies=[Depends(require_role(UserRole.Staff))])
+def get_staff_notifications_endpoint(limit: int = 25, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    return get_staff_notifications(db, user.UserID, limit)
+

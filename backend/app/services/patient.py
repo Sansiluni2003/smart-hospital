@@ -167,6 +167,13 @@ def book_appointment(db: Session, patient_id: int, appointment_data: Appointment
             f"New appointment APT-{appointment.Appointment_ID} booked for {appointment.AppointmentDate}. Please allocate a doctor.",
             {"appointment_id": appointment.Appointment_ID, "patient_id": patient_id, "date": str(appointment.AppointmentDate)}
         )
+        notify_staff_users(
+            db,
+            "allocation_pending",
+            "Allocation Pending",
+            f"APT-{appointment.Appointment_ID} is waiting for doctor allocation.",
+            {"appointment_id": appointment.Appointment_ID, "patient_id": patient_id, "date": str(appointment.AppointmentDate)}
+        )
     except Exception:
         pass
 

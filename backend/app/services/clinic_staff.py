@@ -11,8 +11,12 @@ from app.models.doctor_schedule import DoctorSchedule
 from app.models.live_queue import LiveQueue, LiveQueueStatus
 from app.models.patient import Patient
 from app.models.user import User
+from app.models.audit_log import AuditLog
+
 from app.schemas.appointment import AppointmentUpdate
+from app.schemas.audit_log import AuditLogCreate,AuditLogResponse,AuditLogBase
 from app.schemas.clinic_staff import ClinicStaffUpdate
+
 from app.utils.notification import send_email, send_sms
 
 
@@ -159,6 +163,22 @@ def verify_patient_arrival(db: Session, appointment_id: int):
             create_in_app_notification(db, appointment.Patient_ID, _queue_notification_message(queue_entry.QueuePosition))
         except Exception:
             pass
+        try:
+            from app.utils.notify import notify_staff_users, EVT_CHECKIN_VERIFIED
+            notify_staff_users(
+                db,
+                EVT_CHECKIN_VERIFIED,
+                "Patient Check-in Verified",
+                f"APT-{appointment.Appointment_ID} checked in and added to queue #{queue_entry.QueuePosition}.",
+                {
+                    "appointment_id": appointment.Appointment_ID,
+                    "patient_id": appointment.Patient_ID,
+                    "doctor_id": appointment.Doctor_ID,
+                    "queue_number": queue_entry.QueuePosition,
+                },
+            )
+        except Exception:
+            pass
     return _arrival_response(db, appointment, queue_entry)
 
 
@@ -198,6 +218,22 @@ def verify_patient_arrival_from_qr(db: Session, payload: str):
         try:
             from app.utils.notification import create_in_app_notification
             create_in_app_notification(db, appointment.Patient_ID, _queue_notification_message(queue_entry.QueuePosition))
+        except Exception:
+            pass
+        try:
+            from app.utils.notify import notify_staff_users, EVT_CHECKIN_VERIFIED
+            notify_staff_users(
+                db,
+                EVT_CHECKIN_VERIFIED,
+                "Patient Check-in Verified",
+                f"APT-{appointment.Appointment_ID} checked in via QR and added to queue #{queue_entry.QueuePosition}.",
+                {
+                    "appointment_id": appointment.Appointment_ID,
+                    "patient_id": appointment.Patient_ID,
+                    "doctor_id": appointment.Doctor_ID,
+                    "queue_number": queue_entry.QueuePosition,
+                },
+            )
         except Exception:
             pass
         # Real-time WS queue update to patient
@@ -475,7 +511,6 @@ def get_available_doctors(db: Session, date: datetime, clinic_id: int | None = N
 
     return results
 
-
 def activate_patient_account(db: Session, patient_id: int):
     patient = db.query(Patient).filter(Patient.Patient_ID == patient_id).first()
     if not patient:
@@ -483,4 +518,54 @@ def activate_patient_account(db: Session, patient_id: int):
     patient.is_active = True
     db.commit()
     db.refresh(patient)
+    try:
+        from app.utils.notify import notify_staff_users, EVT_PATIENT_ACCOUNT_ACTIVATED
+        notify_staff_users(
+            db,
+            EVT_PATIENT_ACCOUNT_ACTIVATED,
+            "Patient Account Activated",
+            f"Patient account {patient.Name} (ID {patient.Patient_ID}) has been activated.",
+            {"patient_id": patient.Patient_ID, "patient_name": patient.Name},
+        )
+    except Exception:
+        pass
     return patient
+
+def get_staff_notifications(db: Session, user_id: int, limit: int = 25):
+    notifications = (
+        db.query(AuditLog)
+        .filter(AuditLog.UserID == user_id, AuditLog.Action == "staff_notification")
+        .order_by(AuditLog.Timestamp.desc())
+        .limit(limit)
+        .all()
+    )
+
+    results = []
+    for item in notifications:
+        title = "Staff Notification"
+        message = item.Details or ""
+        event = "staff_notification"
+        data = {}
+        try:
+            import json
+            payload = json.loads(item.Details or "{}")
+            title = payload.get("title", title)
+            message = payload.get("message", message)
+            event = payload.get("event", event)
+            data = payload.get("data", {}) or {}
+        except Exception:
+            pass
+
+        results.append({
+            "id": item.LogID,
+            "event": event,
+            "title": title,
+            "message": message,
+            "data": data,
+            "time": item.Timestamp.isoformat() if item.Timestamp else None,
+        })
+
+    return results
+
+
+

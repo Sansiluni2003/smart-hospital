@@ -1,11 +1,10 @@
 "use client"
-
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { 
-  Users, 
-  Clock, 
-  CheckCircle, 
+import {
+  Users,
+  Clock,
+  CheckCircle,
   AlertCircle,
   Calendar,
   Activity,
@@ -50,7 +49,10 @@ export default function DoctorDashboard() {
         pending: 0,
       })
       
-      const mappedQueue = (data.queue || []).map((entry: {appointment_id: number; patient_name: string; status: string; queue_number: number; appointment_time?: string | null; notes?: string | null}) => ({
+      // Filter out completed/skipped patients from the active "Current Queue" display
+      const mappedQueue = (data.queue || [])
+        .filter((entry: {status: string}) => entry.status === 'waiting' || entry.status === 'in-consultation')
+        .map((entry: {appointment_id: number; patient_name: string; status: string; queue_number: number; appointment_time?: string | null; notes?: string | null}) => ({
         id: entry.appointment_id,
         time: entry.appointment_time || "Pending",
         patient: entry.patient_name,
@@ -72,12 +74,18 @@ export default function DoctorDashboard() {
       const endpoint = newStatus === 'in-consultation'
         ? `${apiUrl}/api/v1/doctors/doctor/me/appointments/${queueId}/start`
         : `${apiUrl}/api/v1/doctors/doctor/me/appointments/${queueId}/complete`
+        
+      // Ensure we send the required payload for completing a consultation
+      const payload = newStatus === 'completed' 
+        ? { ConsultationNotes: "Completed from dashboard", Prescription: "", AppointmentNotes: "" }
+        : {}
+
       const response = await authFetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({})
+        body: JSON.stringify(payload)
       })
       if (response.ok) {
         fetchDashboardData() // Refresh queue
@@ -95,14 +103,13 @@ export default function DoctorDashboard() {
           <h1 className="text-2xl font-bold">Good Morning, {doctorName}</h1>
           <p className="text-blue-100 mt-2">You have {stats.inQueue} patients waiting in queue today</p>
         </div>
-
         {/* Stats Grid */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
           <Card className="border-0 shadow-md">
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-gray-600">Today&apos;s Patients</p>
+                  <p className="text-sm text-gray-600">Today's Patients</p>
                   <p className="text-3xl font-bold text-gray-900 mt-2">{stats.todayPatients}</p>
                   <p className="text-xs text-green-600 flex items-center mt-2">
                     <TrendingUp className="h-3 w-3 mr-1" />
@@ -115,7 +122,6 @@ export default function DoctorDashboard() {
               </div>
             </CardContent>
           </Card>
-
           <Card className="border-0 shadow-md">
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
@@ -130,7 +136,6 @@ export default function DoctorDashboard() {
               </div>
             </CardContent>
           </Card>
-
           <Card className="border-0 shadow-md">
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
@@ -145,7 +150,6 @@ export default function DoctorDashboard() {
               </div>
             </CardContent>
           </Card>
-
           <Card className="border-0 shadow-md">
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
@@ -161,7 +165,6 @@ export default function DoctorDashboard() {
             </CardContent>
           </Card>
         </div>
-
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Current Queue */}
           <Card className="border-0 shadow-md">
@@ -183,7 +186,7 @@ export default function DoctorDashboard() {
                     <div className="flex items-center space-x-4">
                       <div className="flex items-center justify-center w-10 h-10 rounded-full font-bold text-white"
                            style={{ backgroundColor: '#02006c' }}>
-                        #{upcomingAppointments.indexOf(appointment) + 1}
+                        #{appointment.queue_number}
                       </div>
                       <div>
                         <p className="text-sm font-semibold text-gray-900">{appointment.patient}</p>
@@ -212,7 +215,6 @@ export default function DoctorDashboard() {
               </div>
             </CardContent>
           </Card>
-
           {/* Recent Consultations */}
           <Card className="border-0 shadow-md">
             <CardHeader className="bg-gray-50 border-b border-gray-200">
@@ -221,7 +223,7 @@ export default function DoctorDashboard() {
             <CardContent className="p-6">
               <div className="text-center py-6">
                 {upcomingAppointments.length === 0 ? (
-                  <p className="text-gray-600">No patients in queue</p>
+                  <p className="text-gray-600">No active patients in queue</p>
                 ) : (
                   <p className="text-gray-700">{upcomingAppointments.length} patient(s) waiting for consultation</p>
                 )}
@@ -229,7 +231,6 @@ export default function DoctorDashboard() {
             </CardContent>
           </Card>
         </div>
-
         {/* Quick Actions */}
         <Card className="border-0 shadow-md">
           <CardHeader className="bg-gray-50 border-b border-gray-200">

@@ -9,6 +9,7 @@ import {
   User, Activity, Stethoscope, RadioTower, ArrowRight,
 } from "lucide-react"
 import { authFetch } from "@/lib/authFetch"
+import { useWebSocket } from "@/lib/useWebSocket" // 🌟 Import your optimized WebSocket hook
 
 const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"
 
@@ -67,7 +68,6 @@ export default function PatientQueuePage() {
     } catch {
       router.push("/login")
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router])
 
   const fetchData = useCallback(async (silent = false, signal?: AbortSignal) => {
@@ -102,13 +102,35 @@ export default function PatientQueuePage() {
     }
   }, [patientId, router])
 
+  // 🌟 WebSocket Event Listener: refreshes data instantly on backend state changes
+  useWebSocket(
+    useCallback((evt) => {
+      if (!liveEnabled) return
+
+      const queueTriggerEvents = [
+        "consultation_started",
+        "queue_update",
+        "checkin_verified",
+        "patient_arrived"
+      ]
+
+      if (queueTriggerEvents.includes(evt.event)) {
+        console.log(`[WS Event]: Received "${evt.event}". Instantly refreshing live queue.`);
+        fetchData(true).catch(console.error)
+      }
+    }, [fetchData, liveEnabled])
+  )
+
   useEffect(() => {
     if (!patientId) return
     const ac = new AbortController()
     fetchData(false, ac.signal).catch(console.error)
+    
+    // Safety polling fallback if WebSocket disconnects briefly
     const interval = setInterval(() => {
       fetchData(true, ac.signal).catch(console.error)
-    }, liveEnabled ? 5000 : 30000)
+    }, liveEnabled ? 10000 : 30000)
+
     return () => { ac.abort(); clearInterval(interval) }
   }, [patientId, liveEnabled, fetchData])
 
@@ -145,8 +167,7 @@ export default function PatientQueuePage() {
   }
 
   return (
-    <div className="space-y-6 p-4 sm:p-6">
-
+    <div className="space-y-6 p-4 sm:p-6 max-w-7xl mx-auto">
       {/* ── Page header ── */}
       <div className="flex items-center justify-between">
         <div>
@@ -173,7 +194,7 @@ export default function PatientQueuePage() {
         <div className="flex items-center gap-1.5">
           {liveEnabled && <span className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />}
           <span className="text-sm text-gray-700 font-medium">
-            {liveEnabled ? "Live Updates Active (Updates every 5 seconds)" : "Live Updates Paused"}
+            {liveEnabled ? "Live Updates Active (WebSocket connected + 10s backup)" : "Live Updates Paused"}
           </span>
         </div>
       </label>
@@ -192,7 +213,7 @@ export default function PatientQueuePage() {
         </div>
       )}
 
-      {/* ══ LIVE QUEUE ENTRIES ══ */}
+      {/* ── LIVE QUEUE ENTRIES ── */}
       {liveQueue.length > 0 ? (
         liveQueue.map((entry) => {
           const isConsulting = entry.Status === "In Consultation"
@@ -202,10 +223,8 @@ export default function PatientQueuePage() {
             ? new Date(entry.CheckedInAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
             : "—"
           const doctorAvailable = nowServing != null || isConsulting
-
           return (
             <div key={entry.Appointment_ID} className="space-y-4">
-
               {/* Appointment info */}
               <Card className="border border-gray-200 shadow-sm">
                 <CardHeader className="pb-2 pt-4 px-4">
@@ -228,7 +247,7 @@ export default function PatientQueuePage() {
                     </div>
                     <div className="bg-gray-50 rounded-xl p-3">
                       <p className="text-xs text-gray-400 flex items-center gap-1 mb-1"><Activity className="h-3 w-3" /> Status</p>
-                      <p className={`font-bold text-sm ${isConsulting ? "text-green-600" : "text-indigo-700"}`}>
+                      <p className={`font-bold text-sm ${isConsulting ? "text-green-600 animate-pulse" : "text-indigo-700"}`}>
                         {isConsulting ? "In Consultation" : "Waiting"}
                       </p>
                     </div>
@@ -241,14 +260,14 @@ export default function PatientQueuePage() {
                 <Card className="border border-gray-200 shadow-sm">
                   <CardContent className="p-5 flex flex-col items-center justify-center gap-3">
                     <p className="text-sm font-semibold text-gray-600">Your Position</p>
-                    <div className={`w-28 h-28 rounded-full border-4 flex flex-col items-center justify-center ${isConsulting ? "border-green-500 bg-green-50" : "border-indigo-700 bg-white"}`}>
+                    <div className={`w-28 h-28 rounded-full border-4 flex flex-col items-center justify-center ${isConsulting ? "border-green-500 bg-green-50 animate-pulse" : "border-indigo-700 bg-white"}`}>
                       <span className={`text-3xl font-extrabold ${isConsulting ? "text-green-600" : "text-indigo-900"}`}>#{entry.QueuePosition}</span>
                       <span className="text-xs text-gray-400">in queue</span>
                     </div>
                     {isConsulting ? (
-                      <span className="text-xs font-semibold text-green-600 flex items-center gap-1"><RadioTower className="h-3.5 w-3.5" /> It&apos;s your turn!</span>
+                      <span className="text-xs font-semibold text-green-600 flex items-center gap-1"><RadioTower className="h-3.5 w-3.5 animate-pulse" /> It's your turn! Please enter.</span>
                     ) : ahead === 0 ? (
-                      <span className="text-xs font-semibold text-amber-600 flex items-center gap-1"><ArrowRight className="h-3.5 w-3.5" /> Your turn is coming soon!</span>
+                      <span className="text-xs font-semibold text-amber-600 flex items-center gap-1"><ArrowRight className="h-3.5 w-3.5" /> You are Up Next!</span>
                     ) : (
                       <span className="text-xs text-gray-500">{ahead} {ahead === 1 ? "person" : "people"} ahead</span>
                     )}
@@ -275,12 +294,12 @@ export default function PatientQueuePage() {
                       <div className="bg-green-50 rounded-xl p-3 text-center">
                         <p className="text-xs text-gray-400 flex items-center justify-center gap-1 mb-1"><Activity className="h-3 w-3" /> Doctor Status</p>
                         <p className={`text-sm font-bold ${doctorAvailable ? "text-green-600" : "text-gray-400"}`}>
-                          {doctorAvailable ? "✓ Available" : "Not started"}
+                          {doctorAvailable ? "✓ Active" : "Not started"}
                         </p>
                       </div>
                     </div>
                     <p className="text-xs text-gray-400">
-                      Average consultation time: <strong>{entry.AvgConsultMinutes} minutes</strong> · Based on today&apos;s appointments
+                      Average consultation time: <strong>{entry.AvgConsultMinutes} minutes</strong> · Based on today's appointments
                     </p>
                   </CardContent>
                 </Card>
@@ -295,7 +314,6 @@ export default function PatientQueuePage() {
                   {entry.FullQueue.map((row, rowIdx) => {
                     const isInConsult = row.status === "In Consultation"
                     const isCompleted = row.status === "Completed" || row.status === "Skipped"
-                    // "Next" is the first Waiting patient after the one currently being consulted
                     const firstWaitingPos = entry.FullQueue.find(r => r.status === "Waiting")?.queue_position
                     const isNext = !isInConsult && !isCompleted && row.queue_position === firstWaitingPos && nowServing != null
                     const isMe = row.is_me
@@ -334,7 +352,7 @@ export default function PatientQueuePage() {
                           {isCompleted ? <CheckCircle className="h-4 w-4" /> : `#${row.queue_position}`}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className={`text-sm font-semibold ${isMe ? "text-blue-900" : isInConsult ? "text-red-800" : "text-gray-800"}`}>
+                          <p className={`text-sm font-semibold ${isMe ? "text-blue-900 font-extrabold" : isInConsult ? "text-red-800" : "text-gray-800"}`}>
                             {isInConsult && !isMe && <span className="inline-block w-2 h-2 rounded-full bg-red-500 mr-1.5 align-middle animate-pulse" />}
                             {label}
                           </p>
@@ -368,7 +386,7 @@ export default function PatientQueuePage() {
           <CardHeader className="bg-gray-50 border-b border-gray-200">
             <CardTitle className="text-base font-bold text-gray-900 flex items-center">
               <Clock className="h-5 w-5 mr-2" style={{ color: "#02006c" }} />
-              Today&apos;s Appointments
+              Today's Appointments
             </CardTitle>
           </CardHeader>
           <CardContent className="p-4 space-y-3">
