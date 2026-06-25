@@ -88,28 +88,40 @@ def _notify_queue_updates(db: Session, doctor_id: int, appointment_date: date):
             db,
             up_next.Patient_ID,
             EVT_QUEUE_UPDATE,
-            "You are Up Next!",
-            f"Please prepare to proceed. Dr. {doctor_name} is ready to see you shortly.",
+            "🎯 You are Up Next!",
+            f"Dr. {doctor_name} is ready to see you now. Please proceed to the consultation room immediately.",
             {
                 "appointment_id": up_next.Appointment_ID,
                 "is_next": True,
-                "queue_position": up_next.Queue_Number
+                "queue_position": 1,
+                "total_ahead": 0,
+                "doctor_name": doctor_name
             }
         )
 
         # 3. Notify remaining patients that the queue has progressed
         for idx, appointment in enumerate(waiting_appointments[1:], start=1):
+            # Calculate position message
+            if idx == 1:
+                position_msg = "You are 1 ahead, you will be next"
+            elif idx == 2:
+                position_msg = "You are 2 ahead"
+            else:
+                position_msg = f"You are {idx} ahead"
+            
             notify_patient(
                 db,
                 appointment.Patient_ID,
                 EVT_QUEUE_UPDATE,
-                "Queue Status Updated",
-                f"The doctor is currently consulting. There are now {idx} patients ahead of you.",
+                f"📊 Queue Update - Position {idx + 1}",
+                f"Dr. {doctor_name} has arrived and is now consulting. {position_msg} in the queue.",
                 {
                     "appointment_id": appointment.Appointment_ID,
                     "is_next": False,
-                    "queue_position": appointment.Queue_Number,
-                    "ahead_count": idx
+                    "queue_position": idx + 1,
+                    "total_ahead": idx,
+                    "doctor_name": doctor_name,
+                    "position_message": position_msg
                 }
             )
     except Exception as e:
@@ -247,20 +259,43 @@ def start_doctor_consultation(db: Session, user_id: int, appointment_id: int):
     # 1. Real-time notify the active patient that consultation has officially started
     try:
 
-        from app.utils.notify import notify_patient, EVT_CONSULTATION_STARTED
+        from app.utils.notify import notify_patient, EVT_CONSULTATION_STARTED, EVT_DOCTOR_ARRIVED
         
 
         doctor_obj = db.query(Doctor).filter(Doctor.Doctor_ID == appointment.Doctor_ID).first()
         doctor_name = doctor_obj.Name if doctor_obj else "Your doctor"
         
+        # Notify the active patient
         notify_patient(
             db,
             appointment.Patient_ID,
             EVT_CONSULTATION_STARTED,
-            "Consultation Started",
-            f"{doctor_name} has started your consultation. Please proceed to the room immediately.",
-            {"appointment_id": appointment.Appointment_ID},
+            "🏥 Consultation Started",
+            f"Dr. {doctor_name} has started your consultation. Please proceed to the room immediately.",
+            {"appointment_id": appointment.Appointment_ID, "doctor_name": doctor_name},
         )
+        
+        # Notify all other waiting patients that the doctor has arrived
+        waiting_appointments = db.query(Appointment).filter(
+            Appointment.Doctor_ID == appointment.Doctor_ID,
+            Appointment.AppointmentDate == appointment.AppointmentDate,
+            Appointment.Status.in_(WAITING_APPOINTMENT_STATUSES),
+            Appointment.Appointment_ID != appointment.Appointment_ID
+        ).all()
+        
+        for waiting_apt in waiting_appointments:
+            notify_patient(
+                db,
+                waiting_apt.Patient_ID,
+                EVT_DOCTOR_ARRIVED,
+                "👨‍⚕️ Doctor Has Arrived",
+                f"Dr. {doctor_name} has arrived and is now consulting. Your turn will be announced shortly.",
+                {
+                    "appointment_id": waiting_apt.Appointment_ID,
+                    "doctor_name": doctor_name,
+                    "doctor_id": appointment.Doctor_ID
+                },
+            )
     except Exception:
         pass
 

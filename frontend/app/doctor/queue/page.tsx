@@ -1,10 +1,11 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { authFetch } from "@/lib/authFetch"
+import { useWebSocket } from "@/lib/useWebSocket"
 import { 
   Users, Clock, CheckCircle, User, 
   AlertCircle, FileText, Play, RefreshCw, XCircle
@@ -62,6 +63,22 @@ export default function DoctorQueuePage() {
     return () => clearInterval(interval)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router])
+
+  // 🌟 WebSocket Event Listener: refreshes queue instantly on backend state changes
+  useWebSocket(
+    useCallback((evt) => {
+      const queueTriggerEvents = [
+        "consultation_started",
+        "queue_update",
+        "doctor_arrived",
+      ]
+
+      if (queueTriggerEvents.includes(evt.event)) {
+        console.log(`[WS Event]: Received "${evt.event}". Refreshing doctor queue.`);
+        fetchQueueData(true)
+      }
+    }, [])
+  )
 
   const fetchQueueData = async (silent = false) => {
     if (!silent) setLoading(true)

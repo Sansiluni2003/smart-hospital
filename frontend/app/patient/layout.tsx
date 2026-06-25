@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { 
@@ -36,7 +36,20 @@ export default function PatientLayout({
   children: React.ReactNode
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [patientProfileId, setPatientProfileId] = useState<number | undefined>(undefined)
   const pathname = usePathname()
+
+  useEffect(() => {
+    try {
+      const userStr = localStorage.getItem("user")
+      if (!userStr) return
+      const user = JSON.parse(userStr) as { Patient_ID?: number; patient_id?: number }
+      const id = user.Patient_ID ?? user.patient_id
+      if (typeof id === "number") setPatientProfileId(id)
+    } catch {
+      // Keep notifications functional via live WS even if profile parsing fails.
+    }
+  }, [])
 
   // Pages that should not have the navigation layout
   const noLayoutPages = ['/patient/register', '/patient/login']
@@ -146,7 +159,7 @@ export default function PatientLayout({
           {children}
         </main>
       </div>
-      <RealtimeNotifications />
+      <RealtimeNotifications userRole="Patient" profileId={patientProfileId} />
 
       {/* Sidebar Overlay for Mobile */}
       {sidebarOpen && (

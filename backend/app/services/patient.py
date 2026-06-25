@@ -49,6 +49,14 @@ def mark_as_arrived(db: Session, appointment_id: int):
     db_appointment = db.query(Appointment).filter(Appointment.Appointment_ID == appointment_id).first()
     if not db_appointment:
         return None
+    if db_appointment.Status in {
+        AppointmentStatus.Arrived,
+        AppointmentStatus.In_Progress,
+        AppointmentStatus.Completed,
+        AppointmentStatus.Skipped,
+        AppointmentStatus.Cancelled,
+    }:
+        return db_appointment
     db_appointment.Status = AppointmentStatus.Arrived
     db.commit()
     db.refresh(db_appointment)

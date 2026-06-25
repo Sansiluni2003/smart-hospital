@@ -149,6 +149,18 @@ def verify_patient_arrival(db: Session, appointment_id: int):
     if not appointment:
         return None
 
+    if appointment.Status in {
+        AppointmentStatus.In_Progress,
+        AppointmentStatus.Completed,
+        AppointmentStatus.Cancelled,
+        AppointmentStatus.Skipped,
+    }:
+        raise ValueError("Appointment is already processed and cannot be checked in again")
+
+    if appointment.Status == AppointmentStatus.Arrived:
+        queue_entry = _upsert_live_queue(db, appointment, LiveQueueStatus.Waiting)
+        return _arrival_response(db, appointment, queue_entry)
+
     if not appointment.Doctor_ID:
         raise ValueError("Doctor not allocated yet")
 
@@ -196,6 +208,18 @@ def verify_patient_arrival_from_qr(db: Session, payload: str):
     appointment = db.query(Appointment).filter(Appointment.Appointment_ID == appointment_id).first()
     if not appointment:
         return None
+
+    if appointment.Status in {
+        AppointmentStatus.In_Progress,
+        AppointmentStatus.Completed,
+        AppointmentStatus.Cancelled,
+        AppointmentStatus.Skipped,
+    }:
+        raise ValueError("Appointment is already processed and cannot be checked in again")
+
+    if appointment.Status == AppointmentStatus.Arrived:
+        queue_entry = _upsert_live_queue(db, appointment, LiveQueueStatus.Waiting)
+        return _arrival_response(db, appointment, queue_entry)
 
     if data.get("patient") and int(data["patient"]) != appointment.Patient_ID:
         raise ValueError("QR payload patient mismatch")
@@ -540,7 +564,23 @@ def get_staff_notifications(db: Session, user_id: int, limit: int = 25):
         .all()
     )
 
+    active_lifecycle_events = {
+        "appointment_booked",
+        "allocation_pending",
+        "appointment_allocated",
+        "patient_arrived",
+        "checkin_verified",
+        "queue_update",
+        "consultation_started",
+    }
+    terminal_statuses = {
+        AppointmentStatus.Completed,
+        AppointmentStatus.Cancelled,
+        AppointmentStatus.Skipped,
+    }
+
     results = []
+    seen_fingerprints: set[str] = set()
     for item in notifications:
         title = "Staff Notification"
         message = item.Details or ""
@@ -555,6 +595,21 @@ def get_staff_notifications(db: Session, user_id: int, limit: int = 25):
             data = payload.get("data", {}) or {}
         except Exception:
             pass
+
+        appointment_id = data.get("appointment_id")
+        if event in active_lifecycle_events and appointment_id is not None:
+            try:
+                appointment_id_int = int(appointment_id)
+                appointment = db.query(Appointment).filter(Appointment.Appointment_ID == appointment_id_int).first()
+                if appointment and appointment.Status in terminal_statuses:
+                    continue
+            except Exception:
+                pass
+
+        fingerprint = f"{event}|{message}|{data.get('appointment_id')}"
+        if fingerprint in seen_fingerprints:
+            continue
+        seen_fingerprints.add(fingerprint)
 
         results.append({
             "id": item.LogID,

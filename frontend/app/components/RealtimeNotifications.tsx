@@ -18,7 +18,7 @@ import { authFetch } from "@/lib/authFetch";
 
 
 interface ToastItem {
-  id: number;
+  id: string;
   event: string;
   title: string;
   message: string;
@@ -39,6 +39,7 @@ const EVENT_ICON: Record<string, string> = {
   patient_account_activated: "🟢",
   queue_update:              "🔢",
   consultation_started:      "👨‍⚕️",
+  doctor_arrived:            "👨‍⚕️",
   sms_sent:                  "📱",
 };
 
@@ -49,6 +50,11 @@ export default function RealtimeNotifications({ userRole = "Staff", profileId }:
   const [history, setHistory] = useState<ToastItem[]>([]);
   const idRef = useRef(0);
   const router = useRouter();
+
+  const makeClientId = useCallback((prefix: string) => {
+    idRef.current += 1;
+    return `${prefix}-${Date.now()}-${idRef.current}`;
+  }, []);
 
   // Dynamic Routing Logic based on User Role and Event Payload
   const getEventRoute = useCallback((event: string, data?: Record<string, any>): string => {
@@ -74,6 +80,7 @@ export default function RealtimeNotifications({ userRole = "Staff", profileId }:
         case "checkin_verified":
           return `/staff/checkin${queryStr}`;
         case "queue_update":
+        case "doctor_arrived":
         case "consultation_started":
           return `/staff/live-queue${queryStr}`;
         case "patient_account_activated":
@@ -93,6 +100,7 @@ export default function RealtimeNotifications({ userRole = "Staff", profileId }:
           return `/patient/appointments${queryStr}`;
         case "patient_arrived":
         case "checkin_verified":
+        case "doctor_arrived":
         case "queue_update":
         case "consultation_started":
           return `/patient/queue${queryStr}`;
@@ -127,7 +135,7 @@ export default function RealtimeNotifications({ userRole = "Staff", profileId }:
   }, [router, getEventRoute]);
 
   const pushToast = useCallback((evt: WsEvent) => {
-    const id = ++idRef.current;
+    const id = makeClientId("live");
     const item: ToastItem = { 
       id, 
       event: evt.event, 
@@ -139,7 +147,7 @@ export default function RealtimeNotifications({ userRole = "Staff", profileId }:
     setHistory((p) => [item, ...p].slice(0, 50));
     setUnread((n) => n + 1);
     setTimeout(() => setToasts((p) => p.filter((t) => t.id !== id)), 6000);
-  }, []);
+  }, [makeClientId]);
 
   // Safe History Fetch targeting Role-Specific endpoints
   const loadStoredNotifications = useCallback(async () => {
@@ -158,33 +166,60 @@ export default function RealtimeNotifications({ userRole = "Staff", profileId }:
       const response = await authFetch(historyUrl);
       if (!response.ok) return;
 
-      const items = (await response.json()) as Array<{
-        id: number;
-        event: string;
-        title: string;
-        message: string;
-        data?: Record<string, any>;
-      }>;
+      const items = (await response.json()) as Array<Record<string, any>>;
 
       if (items.length === 0) return;
 
-      const seededHistory = items.map((item) => ({
-        id: item.id,
-        event: item.event,
-        title: item.title,
-        message: item.message,
-        data: item.data,
-      }));
+      // Support both realtime-style payloads and DB notification rows.
+      const nowMs = Date.now();
+      const maxAgeMs = 24 * 60 * 60 * 1000;
+      const fingerprints = new Set<string>();
+
+      const seededHistory = items
+        .map((item, index) => {
+          const dbMessage = typeof item.Message === "string" ? item.Message : undefined;
+          const rtMessage = typeof item.message === "string" ? item.message : undefined;
+          const message = rtMessage ?? dbMessage ?? "You have a new notification.";
+
+          const dbType = typeof item.NotificationType === "string" ? item.NotificationType : undefined;
+          const title = typeof item.title === "string"
+            ? item.title
+            : dbType
+              ? `${dbType} Notification`
+              : "Notification";
+
+          const event = typeof item.event === "string"
+            ? item.event
+            : dbType === "SMS"
+              ? "sms_sent"
+              : "notification";
+
+          const rawId = item.id ?? item.Notification_ID ?? index;
+          const rawTime = item.time ?? item.Sent_Time ?? null;
+          const parsedTime = typeof rawTime === "string" ? Date.parse(rawTime) : NaN;
+          const isRecent = Number.isNaN(parsedTime) ? true : nowMs - parsedTime <= maxAgeMs;
+
+          return {
+            id: `seed-${String(rawId)}-${index}`,
+            event,
+            title,
+            message,
+            data: (item.data ?? {}) as Record<string, any>,
+            isRecent,
+          };
+        })
+        .filter((item) => Boolean(item.message) && item.isRecent)
+        .filter((item) => {
+          const fingerprint = `${item.event}|${item.message}|${String(item.data?.appointment_id ?? "")}`;
+          if (fingerprints.has(fingerprint)) return false;
+          fingerprints.add(fingerprint);
+          return true;
+        })
+        .map(({ isRecent, ...item }) => item);
 
       setHistory(seededHistory);
-      setUnread(seededHistory.length);
-
-      // Flash only the most recent notification as a toast
-      seededHistory.slice(0, 3).forEach((item) => {
-        const toastId = ++idRef.current;
-        setToasts((prev) => [...prev, { ...item, id: toastId }]);
-        setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== toastId)), 6000);
-      });
+      // Stored history should not be replayed as "new" notifications on login.
+      setUnread(0);
     } catch {
       // live websocket fallback
     }
@@ -196,7 +231,7 @@ export default function RealtimeNotifications({ userRole = "Staff", profileId }:
     void loadStoredNotifications();
   }, [loadStoredNotifications]);
 
-  const dismiss = (id: number) => setToasts((p) => p.filter((t) => t.id !== id));
+  const dismiss = (id: string) => setToasts((p) => p.filter((t) => t.id !== id));
 
   return (
     <>

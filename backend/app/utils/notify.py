@@ -26,6 +26,7 @@ EVT_PATIENT_ARRIVED      = "patient_arrived"
 EVT_CHECKIN_VERIFIED     = "checkin_verified"
 EVT_QUEUE_UPDATE         = "queue_update"
 EVT_CONSULTATION_STARTED = "consultation_started"
+EVT_DOCTOR_ARRIVED       = "doctor_arrived"
 EVT_SMS_SENT             = "sms_sent"
 EVT_PATIENT_ACCOUNT_ACTIVATED = "patient_account_activated"
 
@@ -33,11 +34,15 @@ EVT_PATIENT_ACCOUNT_ACTIVATED = "patient_account_activated"
 def _fire(user_id: int, payload: dict):
     """Push payload over WebSocket without blocking a sync caller."""
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
             loop.create_task(manager.send(user_id, payload))
         else:
-            loop.run_until_complete(manager.send(user_id, payload))
+            manager.send_from_sync(user_id, payload)
     except Exception:
         pass   # never crash the main request if WS push fails
 

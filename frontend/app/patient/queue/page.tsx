@@ -109,6 +109,7 @@ export default function PatientQueuePage() {
 
       const queueTriggerEvents = [
         "consultation_started",
+        "doctor_arrived",
         "queue_update",
         "checkin_verified",
         "patient_arrived"

@@ -65,6 +65,7 @@ interface Appointment {
   location: string
   backend_id?: number
   qrCode?: string
+  createdAt?: string
 }
 
 const normalizeAppointmentStatus = (status?: string): Appointment['status'] => {
@@ -164,7 +165,8 @@ export default function AppointmentsPage() {
         queueNumber: apt.Queue_Number || apt.queue_number || 1,
         status: normalizeAppointmentStatus(apt.Status || apt.status),
         location: apt.Location || apt.location || 'Main Building',
-        qrCode: apt.QR_code || apt.qr_code || `${apt.Appointment_ID || apt.id}`
+        qrCode: apt.QR_code || apt.qr_code || `${apt.Appointment_ID || apt.id}`,
+        createdAt: apt.CreatedAt || apt.created_at
       }));
       setAppointments(formatted);
     } catch (error) {
@@ -174,44 +176,89 @@ export default function AppointmentsPage() {
     }
   };
 
-  // Sophisticated sorting logic: Active/upcoming closest date first, completed/cancelled reverse chronological last
+  // Sophisticated sorting logic: 
+  // 1. Active/upcoming by recency (newly booked first), then by date
+  // 2. Completed/cancelled by date (most recent first)
+  // 3. Excludes past appointments from active list
   const sortedAppointments = useMemo(() => {
     const isPast = (status: Appointment['status']) => status === 'completed' || status === 'cancelled';
+
+    const parseDateTime = (dateStr: string, timeStr?: string) => {
+      try {
+        const cleanDate = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr;
+        if (timeStr) {
+          const d = new Date(`${cleanDate}T${timeStr}`);
+          return isNaN(d.getTime()) ? new Date(cleanDate) : d;
+        }
+        return new Date(cleanDate);
+      } catch {
+        return new Date(0);
+      }
+    };
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
     return [...appointments].sort((a, b) => {
       const aPast = isPast(a.status);
       const bPast = isPast(b.status);
 
+      // Separate past from active
       if (aPast !== bPast) {
-        return aPast ? 1 : -1; 
+        return aPast ? 1 : -1;
       }
-
-      const parseDateTime = (dateStr: string, timeStr: string) => {
-        try {
-          const cleanDate = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr;
-          const d = new Date(`${cleanDate}T${timeStr}`);
-          return isNaN(d.getTime()) ? new Date(cleanDate) : d;
-        } catch {
-          return new Date(0);
-        }
-      };
 
       const dateA = parseDateTime(a.date, a.time);
       const dateB = parseDateTime(b.date, b.time);
 
       if (aPast) {
-        return dateB.getTime() - dateA.getTime(); // Past: newest first
+        // Completed/Cancelled: newest first (descending date)
+        return dateB.getTime() - dateA.getTime();
       } else {
-        return dateA.getTime() - dateB.getTime(); // Active: soonest first
+        // Active: Sort by recency (newly booked first), then by date
+        // If CreatedAt available, prioritize by that
+        const createdAtA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const createdAtB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+
+        // If both have createdAt, sort by that (newest first)
+        if (createdAtA && createdAtB) {
+          const createdDiff = createdAtB - createdAtA;
+          if (createdDiff !== 0) return createdDiff;
+        }
+
+        // Otherwise sort by appointment date (soonest first)
+        return dateA.getTime() - dateB.getTime();
       }
     });
   }, [appointments]);
 
-  // Extract the very next active appointment to spotlight it at the top
+  // Extract the next FUTURE active appointment for "Up Next" spotlight
   const nextAppointment = useMemo(() => {
-    return sortedAppointments.find(
-      (a) => a.status === 'upcoming' || a.status === 'allocated' || a.status === 'arrived' || a.status === 'ongoing'
-    );
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const parseDateTime = (dateStr: string, timeStr?: string) => {
+      try {
+        const cleanDate = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr;
+        if (timeStr) {
+          const d = new Date(`${cleanDate}T${timeStr}`);
+          return isNaN(d.getTime()) ? new Date(cleanDate) : d;
+        }
+        return new Date(cleanDate);
+      } catch {
+        return new Date(0);
+      }
+    };
+
+    return sortedAppointments.find((a) => {
+      // Must be active status
+      if (!['upcoming', 'allocated', 'arrived', 'ongoing', 'scheduled'].includes(a.status)) {
+        return false;
+      }
+      // Must be in the future (today or later)
+      const appointmentDate = parseDateTime(a.date, a.time);
+      return appointmentDate >= today;
+    });
   }, [sortedAppointments]);
 
   const filteredAppointments = useMemo(() => {

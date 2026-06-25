@@ -1,10 +1,11 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { authFetch } from "@/lib/authFetch"
+import { useWebSocket } from "@/lib/useWebSocket"
 import { 
   Stethoscope, User, FileText, CheckCircle, 
   AlertCircle, Pill, MessageSquare, Save, History, Upload, Paperclip, CalendarDays, MapPin, Phone, IdCard
@@ -75,6 +76,21 @@ export default function DoctorConsultationPage() {
     }, 10000)
     return () => clearInterval(interval)
   }, [router])
+
+  // 🌟 WebSocket Event Listener: refreshes active patient on backend state changes
+  useWebSocket(
+    useCallback((evt) => {
+      const consultationTriggerEvents = [
+        "consultation_started",
+        "doctor_arrived",
+      ]
+
+      if (consultationTriggerEvents.includes(evt.event)) {
+        console.log(`[WS Event]: Received "${evt.event}". Refreshing active consultation.`);
+        fetchActivePatient(true)
+      }
+    }, [])
+  )
 
   const calculateAge = (dateOfBirth: string | null) => {
     if (!dateOfBirth) return null
