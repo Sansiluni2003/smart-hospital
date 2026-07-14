@@ -151,7 +151,7 @@ export default function DoctorLayout({ children }: { children: React.ReactNode }
         <main className="flex-1 overflow-auto">
           {children}
         </main>
-        <RealtimeNotifications />
+        <RealtimeNotifications userRole="Doctor" />
       </div>
 
       {/* Sidebar Overlay for Mobile */}

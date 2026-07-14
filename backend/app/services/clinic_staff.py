@@ -345,7 +345,9 @@ def allocate_appointment(db: Session, appointment_id: int, doctor_id: int, appoi
             f"Queue No: {appointment.Queue_Number}\n"
             f"Please arrive 10 minutes early."
         )
-        send_sms(patient.Phone_No, sms_message)
+        send_result = send_sms(patient.Phone_No, sms_message)
+        if send_result is None:
+            print(f"[ALLOC] WARNING: SMS failed to send to patient {patient.Patient_ID} ({patient.Phone_No})")
         patient_email = _get_patient_user_email(db, patient)
         if patient_email:
             send_email(patient_email, "Appointment Confirmed", sms_message)

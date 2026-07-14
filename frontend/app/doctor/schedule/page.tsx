@@ -42,7 +42,7 @@ export default function DoctorSchedulePage() {
   const [showAddSlot, setShowAddSlot] = useState(false)
   const [editingSlot, setEditingSlot] = useState<TimeSlot | null>(null)
   const [newSlot, setNewSlot] = useState({
-    day: '',
+    date: '',
     startTime: '',
     endTime: '',
     maxPatients: 10
@@ -166,18 +166,16 @@ export default function DoctorSchedulePage() {
   }
 
   const saveNewSlot = async () => {
-    if (!newSlot.day || !newSlot.startTime || !newSlot.endTime) return
+    if (!newSlot.date || !newSlot.startTime || !newSlot.endTime) return
     setSaving(true)
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
-      const targetDay = weekDates.find((item) => item.day === newSlot.day)
-      if (!targetDay) return
 
       const response = await authFetch(`${apiUrl}/api/v1/doctors/doctor/me/schedule`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          AvailableDate: toDateOnly(targetDay.fullDate),
+          AvailableDate: newSlot.date,
           StartTime: newSlot.startTime,
           EndTime: newSlot.endTime,
           max_patients: newSlot.maxPatients,
@@ -188,7 +186,7 @@ export default function DoctorSchedulePage() {
         throw new Error('Failed to create schedule slot')
       }
 
-      setNewSlot({ day: '', startTime: '', endTime: '', maxPatients: 10 })
+      setNewSlot({ date: '', startTime: '', endTime: '', maxPatients: 10 })
       setShowAddSlot(false)
       fetchWeekData()
     } catch (error) {
@@ -316,20 +314,16 @@ export default function DoctorSchedulePage() {
             <CardContent className="p-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="text-sm font-medium text-gray-700 mb-2 block">Day</label>
-                  <select
-                    value={editingSlot ? editingSlot.day : newSlot.day}
-                    onChange={(e) => editingSlot 
-                      ? setEditingSlot({...editingSlot, day: e.target.value})
-                      : setNewSlot({...newSlot, day: e.target.value})
+                  <label className="text-sm font-medium text-gray-700 mb-2 block">Date</label>
+                  <input
+                    type="date"
+                    value={editingSlot ? editingSlot.availableDate : newSlot.date}
+                    onChange={(e) => editingSlot
+                      ? setEditingSlot({...editingSlot, availableDate: e.target.value, day: new Date(e.target.value + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long' })})
+                      : setNewSlot({...newSlot, date: e.target.value})
                     }
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="">Select Day</option>
-                    {daysOfWeek.map(day => (
-                      <option key={day} value={day}>{day}</option>
-                    ))}
-                  </select>
+                  />
                 </div>
                 <div>
                   <label className="text-sm font-medium text-gray-700 mb-2 block">Max Patients</label>
@@ -433,7 +427,12 @@ export default function DoctorSchedulePage() {
             return (
               <Card 
                 key={index} 
-                className={`border-0 shadow-md ${isToday ? 'ring-2 ring-blue-500' : ''}`}
+                className={`border-0 shadow-md cursor-pointer ${isToday ? 'ring-2 ring-blue-500' : ''}`}
+                onClick={() => {
+                  setNewSlot({ date: toDateOnly(dayInfo.fullDate), startTime: '', endTime: '', maxPatients: 10 })
+                  setEditingSlot(null)
+                  setShowAddSlot(true)
+                }}
               >
                 <CardHeader className={`p-4 text-center ${isToday ? 'bg-blue-50' : 'bg-gray-50'} border-b`}>
                   <div className="space-y-1">

@@ -218,12 +218,39 @@ export default function RealtimeNotifications({ userRole = "Staff", profileId }:
         .map(({ isRecent, ...item }) => item);
 
       setHistory(seededHistory);
-      // Stored history should not be replayed as "new" notifications on login.
-      setUnread(0);
+
+      // Only pop toasts for notifications the user has NOT seen before.
+      // We persist seen notification IDs in localStorage keyed by role+profileId.
+      const seenKey = `seen_notif_ids_${userRole}_${profileId ?? "anon"}`;
+      let seenIds: Set<string>;
+      try {
+        seenIds = new Set(JSON.parse(localStorage.getItem(seenKey) ?? "[]") as string[]);
+      } catch {
+        seenIds = new Set();
+      }
+
+      const unseen = seededHistory.filter((item) => !seenIds.has(item.id));
+
+      // Mark all current notifications as seen
+      const allIds = seededHistory.map((item) => item.id);
+      try {
+        localStorage.setItem(seenKey, JSON.stringify(allIds));
+      } catch { /* storage full – ignore */ }
+
+      // Pop up to 3 unseen notifications as toasts
+      unseen.slice(0, 3).forEach((item, i) => {
+        setTimeout(() => {
+          const toastId = makeClientId("login");
+          const toastItem: ToastItem = { ...item, id: toastId };
+          setToasts((p) => [...p, toastItem]);
+          setTimeout(() => setToasts((p) => p.filter((t) => t.id !== toastId)), 6000);
+        }, i * 600);
+      });
+      setUnread(unseen.length);
     } catch {
       // live websocket fallback
     }
-  }, [userRole, profileId]);
+  }, [userRole, profileId, makeClientId]);
 
   useWebSocket(pushToast);
 

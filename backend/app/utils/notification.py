@@ -56,14 +56,40 @@ def _normalize_phone(number: str) -> str:
 
 def send_sms(to_number: str, message: str):
     try:
-        if not VONAGE_API_KEY or not VONAGE_API_SECRET:
+        # Inject Windows/system trust store on every call – idempotent and
+        # necessary when the server started before truststore was installed.
+        try:
+            import truststore as _ts
+            _ts.inject_into_ssl()
+        except ImportError:
+            pass
+
+        # Read credentials fresh each call so .env changes / late dotenv load
+        # are always picked up without requiring a server restart.
+        from dotenv import load_dotenv as _ld
+        _ld(dotenv_path=os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), '.env'), override=False)
+        api_key = os.getenv("VONAGE_API_KEY")
+        api_secret = os.getenv("VONAGE_API_SECRET")
+        from_number = os.getenv("VONAGE_FROM_NUMBER", "")
+
+        if not api_key or not api_secret:
             print("[SMS] Vonage credentials not configured.")
             return None
-        client = Vonage(Auth(api_key=VONAGE_API_KEY, api_secret=VONAGE_API_SECRET))
-        from_num = _normalize_phone(VONAGE_FROM_NUMBER)
+        client = Vonage(Auth(api_key=api_key, api_secret=api_secret))
+        from_num = _normalize_phone(from_number)
         to_num = _normalize_phone(to_number)
         response = client.sms.send(SmsMessage(to=to_num, from_=from_num, text=message))
         print(f"[SMS] Sent to {to_num}: {response}")
+        # Warn if account balance is low or negative
+        try:
+            bal = float(response.messages[0].remaining_balance)
+            if bal < 0:
+                print(f"[SMS] WARNING: Vonage account balance is NEGATIVE ({bal:.5f} EUR). "
+                      "SMS may not be delivered. Top up at https://dashboard.nexmo.com/billing-and-payments")
+            elif bal < 1.0:
+                print(f"[SMS] WARNING: Low Vonage balance ({bal:.5f} EUR, ~{int(bal/0.42043)} SMS left).")
+        except Exception:
+            pass
         return response
     except Exception as e:
         print(
