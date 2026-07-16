@@ -27,6 +27,7 @@ class AppointmentResponse(AppointmentBase):
         orm_mode = True
 
 class AppointmentCreate(BaseModel):
+    Patient_ID: Optional[int] = None   # required when staff creates directly
     ClinicID: int
     Doctor_ID: Optional[int] = None
     AppointmentDate: date

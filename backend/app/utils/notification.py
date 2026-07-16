@@ -75,21 +75,59 @@ def send_sms(to_number: str, message: str):
         if not api_key or not api_secret:
             print("[SMS] Vonage credentials not configured.")
             return None
+
         client = Vonage(Auth(api_key=api_key, api_secret=api_secret))
+
+        # ── Pre-flight balance check ────────────────────────────────────────
+        # Sri Lanka (LK) outbound SMS costs ~0.42 EUR each.
+        # Block immediately if balance is below that threshold so the account
+        # does not go into a negative state that prevents ALL future calls.
+        SMS_MIN_BALANCE_EUR = float(os.getenv("SMS_MIN_BALANCE_EUR", "0.45"))
+        try:
+            bal = client.account.get_balance()
+            balance_eur = float(bal.value)
+            if balance_eur < SMS_MIN_BALANCE_EUR:
+                print(
+                    f"[SMS] BLOCKED – Vonage balance {balance_eur:.5f} EUR is below the minimum "
+                    f"{SMS_MIN_BALANCE_EUR} EUR needed for one Sri Lanka SMS (cost ~0.42 EUR). "
+                    "Top up at https://dashboard.nexmo.com/billing-and-payments"
+                )
+                return None
+        except Exception as bal_err:
+            print(f"[SMS] Could not check balance: {bal_err}")
+
         from_num = _normalize_phone(from_number)
         to_num = _normalize_phone(to_number)
         response = client.sms.send(SmsMessage(to=to_num, from_=from_num, text=message))
-        print(f"[SMS] Sent to {to_num}: {response}")
-        # Warn if account balance is low or negative
-        try:
-            bal = float(response.messages[0].remaining_balance)
-            if bal < 0:
-                print(f"[SMS] WARNING: Vonage account balance is NEGATIVE ({bal:.5f} EUR). "
-                      "SMS may not be delivered. Top up at https://dashboard.nexmo.com/billing-and-payments")
-            elif bal < 1.0:
-                print(f"[SMS] WARNING: Low Vonage balance ({bal:.5f} EUR, ~{int(bal/0.42043)} SMS left).")
-        except Exception:
-            pass
+        print(f"[SMS] Response to {to_num}: {response}")
+
+        # ── Check per-message delivery status ──────────────────────────────
+        # Vonage status 0 = delivered; anything else is an error.
+        # Common failure codes:
+        #   4  = Invalid credentials
+        #   9  = Partner quota exceeded / insufficient funds
+        #   17 = Message blocked by carrier
+        for msg in response.messages:
+            status = int(msg.status) if msg.status is not None else -1
+            if status != 0:
+                print(
+                    f"[SMS] FAILED – status code {status} for {to_num}. "
+                    "Code 9 = insufficient Vonage funds. "
+                    "See: https://developer.vonage.com/messaging/sms/guides/troubleshooting-sms"
+                )
+                return None
+            try:
+                remaining = float(msg.remaining_balance)
+                if remaining < 0:
+                    print(
+                        f"[SMS] WARNING – Account balance went NEGATIVE ({remaining:.5f} EUR) after this SMS. "
+                        "Top up immediately at https://dashboard.nexmo.com/billing-and-payments"
+                    )
+                elif remaining < 0.50:
+                    print(f"[SMS] WARNING – Low balance: {remaining:.5f} EUR remaining.")
+            except Exception:
+                pass
+
         return response
     except Exception as e:
         print(

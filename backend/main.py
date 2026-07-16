@@ -1,3 +1,4 @@
+import os
 import sys
 from pathlib import Path
 from sqlalchemy.orm import Session
@@ -44,13 +45,14 @@ app = FastAPI()
 uploads_dir = Path(__file__).resolve().parent / "uploads"
 uploads_dir.mkdir(parents=True, exist_ok=True)
 
-# Allow all origins (for development only; restrict in production)
+# CORS: defaults to localhost dev origins; override with ALLOWED_ORIGINS env var
+# in production (comma-separated list, e.g. "https://yourdomain.com").
+_raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
+_allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

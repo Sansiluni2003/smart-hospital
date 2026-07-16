@@ -9,6 +9,10 @@ class UserRole(str, Enum):
     Staff = "Staff"
     Admin = "Admin"
 
+class UserStatus(str, Enum):
+    Pending = "Pending"
+    Active = "Active"
+
 class UserBase(BaseModel):
     Email: EmailStr
     Role: UserRole
@@ -20,9 +24,11 @@ class UserUpdate(BaseModel):
     Email: Optional[EmailStr] = None
     Password: Optional[str] = None
     Role: Optional[UserRole] = None
+    Status: Optional[UserStatus] = None
 
 class UserResponse(UserBase):
     UserID: int
+    Status: UserStatus
     CreatedAt: datetime
 
     class Config:

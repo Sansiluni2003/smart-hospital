@@ -14,7 +14,7 @@ def create_user(db: Session, user: UserCreate):
     user_status = UserStatus.Pending if user.Role == UserRole.Patient else UserStatus.Active
     db_user = User(
         Email=user.Email,
-        Password=get_password_hash(user.Password),  # Hash in production!
+        Password=get_password_hash(user.Password[:72]),
         Role=user.Role,
         Status=user_status,
         CreatedAt=datetime.utcnow()
@@ -59,30 +59,15 @@ def delete_user(db: Session, user_id: int):
     return db_user
 
 # Admin: Monitor system activity (view audit logs)
-def get_audit_logs(db: Session, skip: int = 0, limit: int = 100):
-    return db.query(AuditLog).order_by(AuditLog.Timestamp.desc()).offset(skip).limit(limit).all()
-
-# Admin: Generate operational/performance reports (stub)
-def generate_report(db: Session, report_type: str, start_date: datetime, end_date: datetime):
-    # Implement logic for different report types (appointments, queue stats, etc.)
-    # Example: return count of appointments in date range
-    if report_type == "appointments":
-        from app.models.appointment import Appointment
-        return db.query(Appointment).filter(Appointment.CreatedAt >= start_date, Appointment.CreatedAt <= end_date).count()
-    # Add more report types as needed
-    return None
+def get_audit_logs(db: Session):
+    return db.query(AuditLog).order_by(AuditLog.Timestamp.desc()).all()
 
 # Admin: Manage users (list all users)
 def manage_users(db: Session):
     return db.query(User).all()
 
-# Admin: Get audit logs
-def get_audit_logs(db: Session):
-    return db.query(AuditLog).order_by(AuditLog.Timestamp.desc()).all()
-
-# Admin: Generate report (stub)
+# Admin: Generate report
 def generate_report(db: Session):
-    # Example: return total user count and doctor count
     user_count = db.query(User).count()
     doctor_count = db.query(Doctor).count()
     staff_count = db.query(ClinicStaff).count()

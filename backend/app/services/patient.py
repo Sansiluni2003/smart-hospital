@@ -49,18 +49,79 @@ def mark_as_arrived(db: Session, appointment_id: int):
     db_appointment = db.query(Appointment).filter(Appointment.Appointment_ID == appointment_id).first()
     if not db_appointment:
         return None
+
+    # Already in a terminal or arrived state – nothing to do except return current state
     if db_appointment.Status in {
-        AppointmentStatus.Arrived,
         AppointmentStatus.In_Progress,
         AppointmentStatus.Completed,
         AppointmentStatus.Skipped,
         AppointmentStatus.Cancelled,
     }:
         return db_appointment
+
+    if db_appointment.Status == AppointmentStatus.Arrived:
+        # Already arrived – still notify staff in case they missed the first event
+        _notify_staff_patient_arrived(db, db_appointment)
+        return db_appointment
+
+    # Transition to Arrived
     db_appointment.Status = AppointmentStatus.Arrived
     db.commit()
     db.refresh(db_appointment)
+
+    # ── Update live queue (only possible once a doctor is allocated) ───────
+    if db_appointment.Doctor_ID:
+        try:
+            from app.services.clinic_staff import _upsert_live_queue
+            from app.models.live_queue import LiveQueueStatus
+            queue_entry = _upsert_live_queue(db, db_appointment, LiveQueueStatus.Waiting)
+            if queue_entry:
+                try:
+                    from app.utils.notification import create_in_app_notification
+                    from app.services.clinic_staff import _queue_notification_message
+                    create_in_app_notification(
+                        db,
+                        db_appointment.Patient_ID,
+                        _queue_notification_message(queue_entry.QueuePosition),
+                    )
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    # ── Notify all connected staff members ─────────────────────────────────
+    _notify_staff_patient_arrived(db, db_appointment)
+
     return db_appointment
+
+
+def _notify_staff_patient_arrived(db: Session, appointment):
+    """Push a real-time WebSocket event to every connected Staff user so they
+    can verify the patient's arrival in the live-queue dashboard."""
+    try:
+        patient = db.query(Patient).filter(Patient.Patient_ID == appointment.Patient_ID).first()
+        patient_name = patient.Name if patient else f"Patient #{appointment.Patient_ID}"
+        opd_id = patient.OPD_Id if patient else ""
+
+        from app.utils.notify import notify_staff_users, EVT_PATIENT_ARRIVED
+        notify_staff_users(
+            db,
+            EVT_PATIENT_ARRIVED,
+            "Patient Self-Arrived",
+            f"{patient_name} (OPD: {opd_id}) has marked themselves as arrived for "
+            f"appointment APT-{appointment.Appointment_ID}. Please verify at the counter.",
+            {
+                "appointment_id": appointment.Appointment_ID,
+                "patient_id": appointment.Patient_ID,
+                "patient_name": patient_name,
+                "opd_id": opd_id,
+                "doctor_id": appointment.Doctor_ID,
+                "date": str(appointment.AppointmentDate),
+            },
+        )
+    except Exception as e:
+        # Never let a notification failure break the main arrival flow
+        print(f"[mark_as_arrived] Staff notify failed: {e}")
 
 # Get patient by ID
 def get_patient(db: Session, patient_id: int):
@@ -115,15 +176,15 @@ def book_appointment(db: Session, patient_id: int, appointment_data: Appointment
         Appointment.AppointmentDate == appointment_date
     ).count()
     if count >= clinic.MaxPatients:
-        raise ValueError("Clinic has reached its maximum patient count for the day.")
+        raise HTTPException(status_code=400, detail="Clinic has reached its maximum patient count for the day.")
 
     # Validate weekday
     if not is_weekday(datetime.combine(appointment_date, appointment_time)):
-        raise ValueError("Appointments can only be booked on weekdays (Monday–Friday).")
+        raise HTTPException(status_code=400, detail="Appointments can only be booked on weekdays (Monday–Friday).")
 
     # Validate clinic hours
     if not is_within_clinic_hours(datetime.combine(appointment_date, appointment_time)):
-        raise ValueError("Appointments can only be booked between 08:00 and 16:00.")
+        raise HTTPException(status_code=400, detail="Appointments can only be booked between 08:00 and 16:00.")
 
     appointment = Appointment(
         Patient_ID=patient_id,

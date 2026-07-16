@@ -264,7 +264,7 @@ export default function DashboardPage() {
         <Link href="/patient/queue">
           <Card className="border-0 shadow-md hover:shadow-lg transition-all cursor-pointer group hover:-translate-y-1">
             <CardContent className="p-6 text-center">
-              <div className="w-14 h-14 rounded-full bg-orange-500 mx-auto mb-3 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <div className="w-14 h-14 rounded-full bg-red-500 mx-auto mb-3 flex items-center justify-center group-hover:scale-110 transition-transform">
                 <Clock className="h-7 w-7 text-white" />
               </div>
               <h3 className="font-semibold text-gray-900">Queue Status</h3>

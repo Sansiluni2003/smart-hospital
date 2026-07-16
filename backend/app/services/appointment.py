@@ -5,12 +5,14 @@ from datetime import datetime
 
 # Create Appointment
 def create_appointment(db: Session, appointment: AppointmentCreate):
+    if not appointment.Patient_ID:
+        raise ValueError("Patient_ID is required")
     db_appointment = Appointment(
         Patient_ID=appointment.Patient_ID,
         Doctor_ID=appointment.Doctor_ID,
-        ClinicID=appointment.Clinic_ID,
-        AppointmentDate=appointment.AppointmentDate.date(),
-        AppointmentTime=appointment.AppointmentDate.time() if hasattr(appointment.AppointmentDate, 'time') else None,
+        ClinicID=appointment.ClinicID,
+        AppointmentDate=appointment.AppointmentDate,
+        AppointmentTime=appointment.AppointmentTime,
         Status=AppointmentStatus.Pending_Allocation,
         CreatedAt=datetime.utcnow()
     )

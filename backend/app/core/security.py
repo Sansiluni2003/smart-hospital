@@ -9,7 +9,16 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 
 # Secret key and algorithm
-SECRET_KEY = os.getenv("SECRET_KEY")  # Use a strong key and load from .env in production!
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    import warnings
+    warnings.warn(
+        "SECRET_KEY environment variable is not set. "
+        "Using an insecure fallback – set SECRET_KEY in your .env file before deploying.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+    SECRET_KEY = "INSECURE-FALLBACK-KEY-CHANGE-BEFORE-DEPLOY"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
